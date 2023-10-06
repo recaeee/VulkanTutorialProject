@@ -8,6 +8,8 @@
 //cstdlib头文件提供了EXIT_SUCCESS和EXIT_FAILURE宏
 #include <cstdlib>
 
+#include <vector>
+
 //使用常量而不是硬编码的width和height，因为我们会多次引用这些值
 const uint32_t WIDTH = 800;
 const uint32_t HEIGHT = 600;
@@ -25,6 +27,7 @@ public:
 
 private:
 	GLFWwindow* window;
+	VkInstance instance;
 
 	//始化GLFW并且创建一个window
 	void initWindow()
@@ -45,7 +48,7 @@ private:
 	//**initVulkan**函数来用于实例化Vulkan objects私有成员
 	void initVulkan()
 	{
-
+		createInstance();
 	}
 
 	//mainloop来开始渲染每一帧
@@ -62,11 +65,78 @@ private:
 	//一旦window被关闭，我们将在**cleanup**函数中确保释放我们用到的所有资源
 	void cleanup()
 	{
+		//VkInstance只应该在程序退出前一刻销毁，所有其他的Vulkan资源都应该在instance销毁前释放
+		vkDestroyInstance(instance, nullptr);
+
 		//销毁window
 		glfwDestroyWindow(window);
 
 		//结束GLFW本身
 		glfwTerminate();
+	}
+	
+	void createInstance()
+	{
+		//Instance是我们的应用与Vulkan libaray之间的联系，创建它需要向驱动指定和我们的应用相关的一些详细信息
+		VkApplicationInfo appInfo{};
+		appInfo.sType = VK_STRUCTURE_TYPE_APPLICATION_INFO;
+		appInfo.pApplicationName = "Hello Triangle";
+		appInfo.applicationVersion = VK_MAKE_VERSION(1, 0, 0);
+		appInfo.pEngineName = "No Engine";
+		appInfo.engineVersion = VK_MAKE_VERSION(1, 0, 0);
+		appInfo.apiVersion = VK_API_VERSION_1_0;
+
+		VkInstanceCreateInfo createInfo{};
+		createInfo.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO;
+		createInfo.pApplicationInfo = &appInfo;
+
+		uint32_t glfwExtensionCount = 0;
+		const char** glfwExtensions;
+
+		glfwExtensions = glfwGetRequiredInstanceExtensions(&glfwExtensionCount);
+		//我们想要使用哪些全局extensions和validation layers
+		createInfo.enabledExtensionCount = glfwExtensionCount;
+		createInfo.ppEnabledExtensionNames = glfwExtensions;
+		createInfo.enabledLayerCount = 0;
+
+		//检查Extension支持
+		uint32_t extensionCount = 0;
+		vkEnumerateInstanceExtensionProperties(nullptr, &extensionCount, nullptr);
+		std::vector<VkExtensionProperties> extensions(extensionCount);
+		vkEnumerateInstanceExtensionProperties(nullptr, &extensionCount, extensions.data());
+		std::cout << "available extensions\n";
+
+		for (const auto& extension : extensions)
+		{
+			std::cout << '\t' << extension.extensionName << '\n';
+		}
+
+		checkRequiredExtensionsSupported(glfwExtensions, glfwExtensionCount, extensions);
+
+		if (vkCreateInstance(&createInfo, nullptr, &instance) != VK_SUCCESS)
+		{
+			throw std::runtime_error("failed to create instance!");
+		}
+	}
+
+	void checkRequiredExtensionsSupported(const char** requiredExtensions, uint32_t requiredExtensionCount, std::vector<VkExtensionProperties> supportedExtensions)
+	{
+		for (int i = 0; i < requiredExtensionCount; i++)
+		{
+			bool found = false;
+			for (const auto& extension : supportedExtensions)
+			{
+				if (strcmp(requiredExtensions[i], extension.extensionName))
+				{
+					found = true;
+				}
+			}
+			if (!found)
+			{
+				throw std::runtime_error("Required extension not supported.");
+			}
+		}
+		std::cout << "All required extensions are supported." << std::endl;
 	}
 };
 
