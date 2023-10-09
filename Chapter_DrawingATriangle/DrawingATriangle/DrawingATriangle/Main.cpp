@@ -9,10 +9,23 @@
 #include <cstdlib>
 
 #include <vector>
+#include <cstring>
 
 //使用常量而不是硬编码的width和height，因为我们会多次引用这些值
 const uint32_t WIDTH = 800;
 const uint32_t HEIGHT = 600;
+
+//要使用的validation layers
+const std::vector<const char*> validationLayers = {
+	"VK_LAYER_KHRONOS_validation"
+};
+
+//debug模式下开启Validation layers，release则不启用
+#ifdef NDEBUG
+	const bool enableValidationLayers = false;
+#else
+	const bool enableValidationLayers = true;
+#endif
 
 class HelloTriangleApplication
 {
@@ -77,6 +90,11 @@ private:
 	
 	void createInstance()
 	{
+		//检查Validation layers支持
+		if (enableValidationLayers && !checkValidationLayerSupport())
+		{
+			throw std::runtime_error("validation layers requested, but not available!");
+		}
 		//Instance是我们的应用与Vulkan libaray之间的联系，创建它需要向驱动指定和我们的应用相关的一些详细信息
 		VkApplicationInfo appInfo{};
 		appInfo.sType = VK_STRUCTURE_TYPE_APPLICATION_INFO;
@@ -95,23 +113,32 @@ private:
 
 		glfwExtensions = glfwGetRequiredInstanceExtensions(&glfwExtensionCount);
 		//我们想要使用哪些全局extensions和validation layers
-		createInfo.enabledExtensionCount = glfwExtensionCount;
-		createInfo.ppEnabledExtensionNames = glfwExtensions;
-		createInfo.enabledLayerCount = 0;
+		auto extensions = getRequiredExtension();
+		createInfo.enabledExtensionCount = static_cast<uint32_t>(extensions.size());
+		createInfo.ppEnabledExtensionNames = extensions.data();
+		if (enableValidationLayers)
+		{
+			createInfo.enabledLayerCount = static_cast<uint32_t>(validationLayers.size());
+			createInfo.ppEnabledLayerNames = validationLayers.data();
+		}
+		else
+		{
+			createInfo.enabledLayerCount = 0;
+		}
 
 		//检查Extension支持
 		uint32_t extensionCount = 0;
 		vkEnumerateInstanceExtensionProperties(nullptr, &extensionCount, nullptr);
-		std::vector<VkExtensionProperties> extensions(extensionCount);
-		vkEnumerateInstanceExtensionProperties(nullptr, &extensionCount, extensions.data());
+		std::vector<VkExtensionProperties> availableExtensions(extensionCount);
+		vkEnumerateInstanceExtensionProperties(nullptr, &extensionCount, availableExtensions.data());
 		std::cout << "available extensions\n";
 
-		for (const auto& extension : extensions)
+		for (const auto& extension : availableExtensions)
 		{
 			std::cout << '\t' << extension.extensionName << '\n';
 		}
-
-		checkRequiredExtensionsSupported(glfwExtensions, glfwExtensionCount, extensions);
+		//不需要检查Validation layers的extension是否支持
+		checkRequiredExtensionsSupported(glfwExtensions, glfwExtensionCount, availableExtensions);
 
 		if (vkCreateInstance(&createInfo, nullptr, &instance) != VK_SUCCESS)
 		{
@@ -119,12 +146,12 @@ private:
 		}
 	}
 
-	void checkRequiredExtensionsSupported(const char** requiredExtensions, uint32_t requiredExtensionCount, std::vector<VkExtensionProperties> supportedExtensions)
+	void checkRequiredExtensionsSupported(const char** requiredExtensions, uint32_t requiredExtensionCount, std::vector<VkExtensionProperties> availableExtensions)
 	{
 		for (int i = 0; i < requiredExtensionCount; i++)
 		{
 			bool found = false;
-			for (const auto& extension : supportedExtensions)
+			for (const auto& extension : availableExtensions)
 			{
 				if (strcmp(requiredExtensions[i], extension.extensionName))
 				{
@@ -137,6 +164,57 @@ private:
 			}
 		}
 		std::cout << "All required extensions are supported." << std::endl;
+	}
+
+	//检查使用的validation layers是否都支持
+	bool checkValidationLayerSupport()
+	{
+		//和extension几乎一样的操作
+		//先得到所有支持的layers
+		uint32_t layerCount;
+		vkEnumerateInstanceLayerProperties(&layerCount, nullptr);
+
+		std::vector<VkLayerProperties> availableLayers(layerCount);
+		vkEnumerateInstanceLayerProperties(&layerCount, availableLayers.data());
+
+		//检查
+		for (const char* layerName : validationLayers) 
+		{
+			bool layerFound = false;
+
+			for (const auto& layerProperties : availableLayers)
+			{
+				if (strcmp(layerName, layerProperties.layerName) == 0)
+				{
+					layerFound = true;
+					break;
+				}
+			}
+
+			if (!layerFound)
+			{
+				return false;
+			}
+		}
+
+		return true;
+	}
+
+	//得到需要使用的extensions
+	std::vector<const char*> getRequiredExtension()
+	{
+		uint32_t glfwExtensionCount = 0;
+		const char** glfwExtensions;
+		glfwExtensions = glfwGetRequiredInstanceExtensions(&glfwExtensionCount);
+
+		std::vector<const char*> extensions(glfwExtensions, glfwExtensions + glfwExtensionCount);
+		//选择性开启Validation layers
+		if (enableValidationLayers)
+		{
+			extensions.push_back(VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
+		}
+
+		return extensions;
 	}
 };
 
