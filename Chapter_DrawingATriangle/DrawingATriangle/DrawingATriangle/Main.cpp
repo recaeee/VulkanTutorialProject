@@ -291,6 +291,7 @@ private:
 		}
 	}
 
+	//DebugUtilsMessenger的CreateInfo填充单独抽出来一个函数
 	void polulateDebugMessengerCreateInfo(VkDebugUtilsMessengerCreateInfoEXT& createInfo)
 	{
 		createInfo = {};
