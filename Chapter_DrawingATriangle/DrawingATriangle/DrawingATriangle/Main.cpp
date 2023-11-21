@@ -27,6 +27,31 @@ const std::vector<const char*> validationLayers = {
 	const bool enableValidationLayers = true;
 #endif
 
+//由于创建DebugUtilMessenger的函数是个扩展函数（不会自动加载到内存），所以我们要自己查找它的地址，并使用proxy function来执行。
+VkResult CreateDebugUtilsMessengerEXT(VkInstance instance, const VkDebugUtilsMessengerCreateInfoEXT* pCreateInfo,
+	const VkAllocationCallbacks* pAllocator, VkDebugUtilsMessengerEXT* pDebugMessenger)
+{
+	auto func = (PFN_vkCreateDebugUtilsMessengerEXT)vkGetInstanceProcAddr(instance, "vkCreateDebugUtilsMessengerEXT");
+	if (func != nullptr)
+	{
+		return func(instance, pCreateInfo, pAllocator, pDebugMessenger);
+	}
+	else
+	{
+		return VK_ERROR_EXTENSION_NOT_PRESENT;
+	}
+}
+
+void DestroyDebugUtilsMeseengerEXT(VkInstance instance, VkDebugUtilsMessengerEXT debugMessenger,
+	const VkAllocationCallbacks* pAllocator)
+{
+	auto func = (PFN_vkDestroyDebugUtilsMessengerEXT)vkGetInstanceProcAddr(instance, "vkDestroyDebugUtilsMessengerEXT");
+	if (func != nullptr)
+	{
+		func(instance, debugMessenger, pAllocator);
+	}
+}
+
 class HelloTriangleApplication
 {
 public:
@@ -41,6 +66,8 @@ public:
 private:
 	GLFWwindow* window;
 	VkInstance instance;
+	//管理debug callback的handle
+	VkDebugUtilsMessengerEXT debugMessenger;
 
 	//始化GLFW并且创建一个window
 	void initWindow()
@@ -62,6 +89,7 @@ private:
 	void initVulkan()
 	{
 		createInstance();
+		setupDebugMessenger();
 	}
 
 	//mainloop来开始渲染每一帧
@@ -78,6 +106,12 @@ private:
 	//一旦window被关闭，我们将在**cleanup**函数中确保释放我们用到的所有资源
 	void cleanup()
 	{
+		//销毁DebugUtilsMessenger
+		if (enableValidationLayers)
+		{
+			DestroyDebugUtilsMeseengerEXT(instance, debugMessenger, nullptr);
+		}
+
 		//VkInstance只应该在程序退出前一刻销毁，所有其他的Vulkan资源都应该在instance销毁前释放
 		vkDestroyInstance(instance, nullptr);
 
@@ -116,10 +150,15 @@ private:
 		auto extensions = getRequiredExtension();
 		createInfo.enabledExtensionCount = static_cast<uint32_t>(extensions.size());
 		createInfo.ppEnabledExtensionNames = extensions.data();
+		//额外创建一个DebugUtilsMessenger，让vkInstance的pNext拓展指向它，这样可以debug vkCreateInstance和vkDestroyInstance的信息。
+		VkDebugUtilsMessengerCreateInfoEXT debugCreateInfo{};
 		if (enableValidationLayers)
 		{
 			createInfo.enabledLayerCount = static_cast<uint32_t>(validationLayers.size());
 			createInfo.ppEnabledLayerNames = validationLayers.data();
+
+			polulateDebugMessengerCreateInfo(debugCreateInfo);
+			createInfo.pNext = (VkDebugUtilsMessengerCreateInfoEXT*)&debugCreateInfo;
 		}
 		else
 		{
@@ -215,6 +254,53 @@ private:
 		}
 
 		return extensions;
+	}
+
+	//自己管理Validation消息回调
+	static VKAPI_ATTR VkBool32 VKAPI_CALL debugCallback(
+		VkDebugUtilsMessageSeverityFlagBitsEXT messageSeverity,
+		VkDebugUtilsMessageTypeFlagsEXT messageType,
+		const VkDebugUtilsMessengerCallbackDataEXT* pCallbackData,
+		void* pUserData)
+	{
+		if (messageSeverity >= VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT)
+		{
+			std::cerr << "validation layer: " << pCallbackData->pMessage << std::endl;
+		}
+		
+
+		return VK_FALSE;
+	}
+
+	//初始化Debug信息的messenger(VkDebugUtilsMessengerEXT），这个messenger是vkInstance生命周期内使用的
+	void setupDebugMessenger()
+	{
+		if (!enableValidationLayers)
+		{
+			return;
+		}
+
+		//创建messenger同样需要CreateInfo的流程
+		VkDebugUtilsMessengerCreateInfoEXT createInfo;
+		polulateDebugMessengerCreateInfo(createInfo);
+
+		//通过proxy function创建DebugUtilsMessenger
+		if (CreateDebugUtilsMessengerEXT(instance, &createInfo, nullptr, &debugMessenger) != VK_SUCCESS)
+		{
+			throw std::runtime_error("failed to set up debug messenger!");
+		}
+	}
+
+	void polulateDebugMessengerCreateInfo(VkDebugUtilsMessengerCreateInfoEXT& createInfo)
+	{
+		createInfo = {};
+		createInfo.sType = VK_STRUCTURE_TYPE_DEBUG_UTILS_MESSENGER_CREATE_INFO_EXT;
+		createInfo.messageSeverity = VK_DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT | VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT
+			| VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT;
+		createInfo.messageType = VK_DEBUG_UTILS_MESSAGE_TYPE_GENERAL_BIT_EXT | VK_DEBUG_UTILS_MESSAGE_TYPE_VALIDATION_BIT_EXT
+			| VK_DEBUG_UTILS_MESSAGE_TYPE_PERFORMANCE_BIT_EXT;
+		//回调
+		createInfo.pfnUserCallback = debugCallback;
 	}
 };
 
