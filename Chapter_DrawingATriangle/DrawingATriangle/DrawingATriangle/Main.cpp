@@ -11,6 +11,8 @@
 #include <vector>
 #include <cstring>
 
+#include <optional>
+
 //使用常量而不是硬编码的width和height，因为我们会多次引用这些值
 const uint32_t WIDTH = 800;
 const uint32_t HEIGHT = 600;
@@ -68,6 +70,8 @@ private:
 	VkInstance instance;
 	//管理debug callback的handle
 	VkDebugUtilsMessengerEXT debugMessenger;
+	//启用的显卡
+	VkPhysicalDevice physicalDevice = VK_NULL_HANDLE;
 
 	//始化GLFW并且创建一个window
 	void initWindow()
@@ -90,6 +94,7 @@ private:
 	{
 		createInstance();
 		setupDebugMessenger();
+		pickPhysicalDevice();
 	}
 
 	//mainloop来开始渲染每一帧
@@ -303,6 +308,96 @@ private:
 		//回调
 		createInfo.pfnUserCallback = debugCallback;
 	}
+
+#pragma region Physical devices and queue families
+	//启用一张合适的显卡
+	void pickPhysicalDevice()
+	{
+		//列出所有能用的显卡
+		uint32_t deviceCount = 0;
+		vkEnumeratePhysicalDevices(instance, &deviceCount, nullptr);
+		//如果没有一张支持Vulkan的显卡可用，则抛出异常
+		if (deviceCount == 0)
+		{
+			throw std::runtime_error("failed to find GPUs with Vulkan support!");
+		}
+		std::vector<VkPhysicalDevice> devices(deviceCount);
+		vkEnumeratePhysicalDevices(instance, &deviceCount, devices.data());
+		//找到合适的显卡
+		for (const auto& device : devices)
+		{
+			if (isDeviceSuitable(device))
+			{
+				physicalDevice = device;
+				break;
+			}
+		}
+		
+		if (physicalDevice == VK_NULL_HANDLE)
+		{
+			throw std::runtime_error("failed to find a suitable GPU!");
+		}
+	}
+
+	//判断该显卡是否支持我们想要的功能
+	bool isDeviceSuitable(VkPhysicalDevice device)
+	{
+		//获取显卡的基本属性，比如名字、类型、支持的vulkan版本
+		//VkPhysicalDeviceProperties deviceProperties;
+		//vkGetPhysicalDeviceProperties(device, &deviceProperties);
+		//获取显卡支持的特性，例如纹理压缩、64比特浮点数、多视口渲染
+		//VkPhysicalDeviceFeatures deviceFeatures;
+		//vkGetPhysicalDeviceFeatures(device, &deviceFeatures);
+		//在之后的章节我们还会查询显存、Queue families
+
+		QueueFamilyIndices indices = findQueueFamilies(device);
+
+		return indices.isComplete();
+	}
+
+	//我们需要的所有Queue families
+	struct QueueFamilyIndices
+	{
+		//optional允许uint32_t在实际分配值之前让其保持no value，并且可以通过has_value()来查询是否有值
+		std::optional<uint32_t> graphicsFamily;
+
+		//快速判断当前PhysicalDevices是否支持所有我们需要的Queue Families
+		bool isComplete()
+		{
+			return graphicsFamily.has_value();
+		}
+	};
+
+	//判断PhysicalDevice是否支持我们需要的Queue family
+	QueueFamilyIndices findQueueFamilies(VkPhysicalDevice device)
+	{
+		QueueFamilyIndices indices;
+
+		//获取PhysicalDevice支持的所有Queue family
+		uint32_t queueFamilyCount = 0;
+		vkGetPhysicalDeviceQueueFamilyProperties(device, &queueFamilyCount, nullptr);
+		std::vector<VkQueueFamilyProperties> queueFamilies(queueFamilyCount);
+		vkGetPhysicalDeviceQueueFamilyProperties(device, &queueFamilyCount, queueFamilies.data());
+
+		//我们需要支持Graphics Queue Family
+		int i = 0;
+		for (const auto& queueFamily : queueFamilies)
+		{
+			if (queueFamily.queueFlags & VK_QUEUE_GRAPHICS_BIT)
+			{
+				indices.graphicsFamily = i;
+				break;
+			}
+
+			i++;
+		}
+
+		return indices;
+	}
+#pragma endregion
+
+
+
 };
 
 int main()
