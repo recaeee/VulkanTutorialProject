@@ -72,6 +72,10 @@ private:
 	VkDebugUtilsMessengerEXT debugMessenger;
 	//启用的显卡
 	VkPhysicalDevice physicalDevice = VK_NULL_HANDLE;
+	//Logical device，用来与physical device交互
+	VkDevice device;
+	//存储Queue的Handle
+	VkQueue graphicsQueue;
 
 	//始化GLFW并且创建一个window
 	void initWindow()
@@ -95,6 +99,7 @@ private:
 		createInstance();
 		setupDebugMessenger();
 		pickPhysicalDevice();
+		createLogicalDevice();
 	}
 
 	//mainloop来开始渲染每一帧
@@ -111,6 +116,9 @@ private:
 	//一旦window被关闭，我们将在**cleanup**函数中确保释放我们用到的所有资源
 	void cleanup()
 	{
+		//销毁VkDevice
+		vkDestroyDevice(device, nullptr);
+
 		//销毁DebugUtilsMessenger
 		if (enableValidationLayers)
 		{
@@ -368,7 +376,7 @@ private:
 		}
 	};
 
-	//判断PhysicalDevice是否支持我们需要的Queue family
+	//从PhysicalDevice得到我们需要的Queue family
 	QueueFamilyIndices findQueueFamilies(VkPhysicalDevice device)
 	{
 		QueueFamilyIndices indices;
@@ -396,6 +404,54 @@ private:
 	}
 #pragma endregion
 
+#pragma region Logical device and queues
+	void createLogicalDevice()
+	{
+		//先填充VkDeviceQueueCreateInfo，描述了我们想要的单个Queue family中的Queue数量。目前，我们只需要一个具有图形功能的Queue。
+		QueueFamilyIndices indices = findQueueFamilies(physicalDevice);
+
+		VkDeviceQueueCreateInfo queueCreateInfo{};
+		queueCreateInfo.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO;
+		queueCreateInfo.queueFamilyIndex = indices.graphicsFamily.value();
+		queueCreateInfo.queueCount = 1;
+		//Vulkan允许我们为Queues分配一个优先级来影响它们的Commandbuffer的执行调度，其值范围为0.0到1.0
+		float queuePriority = 1.0f;
+		queueCreateInfo.pQueuePriorities = &queuePriority;
+
+		//填充需要的设备特性
+		VkPhysicalDeviceFeatures deviceFeatures{};
+
+		//填充VkDeviceCreateInfo
+		VkDeviceCreateInfo createInfo{};
+		createInfo.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
+		createInfo.pQueueCreateInfos = &queueCreateInfo;
+		createInfo.queueCreateInfoCount = 1;
+
+		createInfo.pEnabledFeatures = &deviceFeatures;
+
+		//填充针对于device的enabled extensions和（被废弃的）ValidationLayers
+		createInfo.enabledExtensionCount = 0;
+
+		if (enableValidationLayers)
+		{
+			createInfo.enabledLayerCount = static_cast<uint32_t>(validationLayers.size());
+			createInfo.ppEnabledLayerNames = validationLayers.data();
+		}
+		else
+		{
+			createInfo.enabledLayerCount = 0;
+		}
+		
+		//创建VkDevice
+		if (vkCreateDevice(physicalDevice, &createInfo, nullptr, &device) != VK_SUCCESS)
+		{
+			throw std::runtime_error("failed to create logical device!");
+		}
+
+		//Queue会在Logical device创建时自动创建，我们需要拿到它的句柄（它也会伴随VkDevice销毁而自动销毁）
+		vkGetDeviceQueue(device, indices.graphicsFamily.value(), 0, &graphicsQueue);
+	}
+#pragma endregion
 
 
 };
