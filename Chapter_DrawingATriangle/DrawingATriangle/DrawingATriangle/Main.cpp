@@ -12,6 +12,11 @@
 #include <cstring>
 
 #include <optional>
+#include <set>
+
+#include <cstdint> // Necessary for uint32_t
+#include <limits> // Necessary for std::numeric_limits
+#include <algorithm> // Necessary for std::clamp
 
 //使用常量而不是硬编码的width和height，因为我们会多次引用这些值
 const uint32_t WIDTH = 800;
@@ -70,12 +75,28 @@ private:
 	VkInstance instance;
 	//管理debug callback的handle
 	VkDebugUtilsMessengerEXT debugMessenger;
+	//Vulkan与实际平台Window system的交互，抽象的Surface
+	VkSurfaceKHR surface;
 	//启用的显卡
 	VkPhysicalDevice physicalDevice = VK_NULL_HANDLE;
 	//Logical device，用来与physical device交互
 	VkDevice device;
-	//存储Queue的Handle
+	//存储Graphics queue的Handle
 	VkQueue graphicsQueue;
+	//存储Present queue的Handle
+	VkQueue presentQueue;
+	//存储Swap chain
+	VkSwapchainKHR swapChain;
+	//存储Swap chain中的VkImage们
+	std::vector<VkImage> swapChainImages;
+	//存储swap chain的format和extent，未来会用到
+	VkFormat swapChainImageFormat;
+	VkExtent2D swapChainExtent;
+
+	//所有要启用的device extensions
+	const std::vector<const char*> deviceExtensions = {
+		VK_KHR_SWAPCHAIN_EXTENSION_NAME
+	};
 
 	//始化GLFW并且创建一个window
 	void initWindow()
@@ -98,8 +119,10 @@ private:
 	{
 		createInstance();
 		setupDebugMessenger();
+		createSurface();
 		pickPhysicalDevice();
 		createLogicalDevice();
+		createSwapChain();
 	}
 
 	//mainloop来开始渲染每一帧
@@ -116,6 +139,9 @@ private:
 	//一旦window被关闭，我们将在**cleanup**函数中确保释放我们用到的所有资源
 	void cleanup()
 	{
+		//销毁Swap chain
+		vkDestroySwapchainKHR(device, swapChain, nullptr);
+
 		//销毁VkDevice
 		vkDestroyDevice(device, nullptr);
 
@@ -124,6 +150,9 @@ private:
 		{
 			DestroyDebugUtilsMeseengerEXT(instance, debugMessenger, nullptr);
 		}
+		
+		//销毁Window surface
+		vkDestroySurfaceKHR(instance, surface, nullptr);
 
 		//VkInstance只应该在程序退出前一刻销毁，所有其他的Vulkan资源都应该在instance销毁前释放
 		vkDestroyInstance(instance, nullptr);
@@ -360,7 +389,17 @@ private:
 
 		QueueFamilyIndices indices = findQueueFamilies(device);
 
-		return indices.isComplete();
+		bool extensionsSupported = checkDeviceExtensionSupport(device);
+
+		bool swapChainAdequate = false;
+		if (extensionsSupported)
+		{
+			SwapChainSupportDetails swapChainSupport = querySwapChainSupport(device);
+			//在该教程中，我们需要至少一个支持的image format和一个presentation mode。
+			swapChainAdequate = !swapChainSupport.formats.empty() && !swapChainSupport.presentModes.empty();
+		}
+
+		return indices.isComplete() && extensionsSupported && swapChainAdequate;
 	}
 
 	//我们需要的所有Queue families
@@ -368,15 +407,17 @@ private:
 	{
 		//optional允许uint32_t在实际分配值之前让其保持no value，并且可以通过has_value()来查询是否有值
 		std::optional<uint32_t> graphicsFamily;
+		//用于present image to surface的family
+		std::optional<uint32_t> presentFamily;
 
 		//快速判断当前PhysicalDevices是否支持所有我们需要的Queue Families
 		bool isComplete()
 		{
-			return graphicsFamily.has_value();
+			return graphicsFamily.has_value() && presentFamily.has_value();
 		}
 	};
 
-	//从PhysicalDevice得到我们需要的Queue family
+	//从PhysicalDevice得到我们需要的Queue family，并且可以用来判断physical device是否支持我们需要的所有queue famliy
 	QueueFamilyIndices findQueueFamilies(VkPhysicalDevice device)
 	{
 		QueueFamilyIndices indices;
@@ -391,9 +432,23 @@ private:
 		int i = 0;
 		for (const auto& queueFamily : queueFamilies)
 		{
+			//判断physical device是否支持graphics family
 			if (queueFamily.queueFlags & VK_QUEUE_GRAPHICS_BIT)
 			{
 				indices.graphicsFamily = i;
+			}
+			//判断physical device是否支持present family
+			VkBool32 presentSupport = false;
+			vkGetPhysicalDeviceSurfaceSupportKHR(device, i, surface, &presentSupport);
+			if (presentSupport)
+			{
+				//注意present family和graphics family实际上很有可能指向同一个family，但我们依然将它们视为单独的两个
+				indices.presentFamily = i;
+			}
+
+			//第一次全获取完就break吧
+			if (indices.isComplete())
+			{
 				break;
 			}
 
@@ -402,35 +457,65 @@ private:
 
 		return indices;
 	}
+
+	//判断Physical device是否支持我们需要开启的device extensions
+	bool checkDeviceExtensionSupport(VkPhysicalDevice device)
+	{
+		//获取physical device支持的所有device extensions
+		uint32_t extensionCount;
+		vkEnumerateDeviceExtensionProperties(device, nullptr, &extensionCount, nullptr);
+		std::vector<VkExtensionProperties> availableExtensions(extensionCount);
+		vkEnumerateDeviceExtensionProperties(device, nullptr, &extensionCount, availableExtensions.data());
+
+		//检查是否所有需要的device extensions都支持
+		std::set<std::string> requiredExtensions(deviceExtensions.begin(), deviceExtensions.end());
+		for (const auto& extension : availableExtensions)
+		{
+			requiredExtensions.erase(extension.extensionName);
+		}
+
+		return requiredExtensions.empty();
+	}
 #pragma endregion
 
 #pragma region Logical device and queues
 	void createLogicalDevice()
 	{
-		//先填充VkDeviceQueueCreateInfo，描述了我们想要的单个Queue family中的Queue数量。目前，我们只需要一个具有图形功能的Queue。
+		//先填充VkDeviceQueueCreateInfo，描述了我们想要的单个Queue family中的Queue数量。
 		QueueFamilyIndices indices = findQueueFamilies(physicalDevice);
-
-		VkDeviceQueueCreateInfo queueCreateInfo{};
-		queueCreateInfo.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO;
-		queueCreateInfo.queueFamilyIndex = indices.graphicsFamily.value();
-		queueCreateInfo.queueCount = 1;
-		//Vulkan允许我们为Queues分配一个优先级来影响它们的Commandbuffer的执行调度，其值范围为0.0到1.0
+		// 目前，我们需要Graphics Queue和Present Queue，因此使用Vector存储queueCreateInfos。
+		std::vector<VkDeviceQueueCreateInfo> queueCreateInfos;
+		std::vector<uint32_t> uniqueQueueFamilies = { indices.graphicsFamily.value(),
+			indices.presentFamily.value() };
 		float queuePriority = 1.0f;
-		queueCreateInfo.pQueuePriorities = &queuePriority;
+		//使用一个循环创建所有QueueCreateInfo
+		for (uint32_t queueFamily : uniqueQueueFamilies)
+		{
+			VkDeviceQueueCreateInfo queueCreateInfo{};
+			queueCreateInfo.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO;
+			queueCreateInfo.queueFamilyIndex = queueFamily;
+			queueCreateInfo.queueCount = 1;
+			//Vulkan允许我们为Queues分配一个优先级来影响它们的Commandbuffer的执行调度，其值范围为0.0到1.0
+			queueCreateInfo.pQueuePriorities = &queuePriority;
+			queueCreateInfos.push_back(queueCreateInfo);
+		}
 
+	
 		//填充需要的设备特性
 		VkPhysicalDeviceFeatures deviceFeatures{};
 
 		//填充VkDeviceCreateInfo
 		VkDeviceCreateInfo createInfo{};
 		createInfo.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
-		createInfo.pQueueCreateInfos = &queueCreateInfo;
-		createInfo.queueCreateInfoCount = 1;
+		createInfo.queueCreateInfoCount = static_cast<uint32_t>(queueCreateInfos.size());
+		createInfo.pQueueCreateInfos = queueCreateInfos.data();
+		
 
 		createInfo.pEnabledFeatures = &deviceFeatures;
 
 		//填充针对于device的enabled extensions和（被废弃的）ValidationLayers
-		createInfo.enabledExtensionCount = 0;
+		createInfo.enabledExtensionCount = static_cast<uint32_t>(deviceExtensions.size());
+		createInfo.ppEnabledExtensionNames = deviceExtensions.data();
 
 		if (enableValidationLayers)
 		{
@@ -449,7 +534,189 @@ private:
 		}
 
 		//Queue会在Logical device创建时自动创建，我们需要拿到它的句柄（它也会伴随VkDevice销毁而自动销毁）
+		//目前两个Queue family相同，因此返回的两个handle也是相同值的。
 		vkGetDeviceQueue(device, indices.graphicsFamily.value(), 0, &graphicsQueue);
+		vkGetDeviceQueue(device, indices.presentFamily.value(), 0, &presentQueue);
+	}
+#pragma endregion
+
+#pragma region Presentation
+	//创建window surface，它需要在创建完VkInstance和DebugMessenger后立即创建，因为它会影响Physical device的选择
+	void createSurface()
+	{
+		//直接通过glfw提供的跨平台接口创建surface
+		if (glfwCreateWindowSurface(instance, window, nullptr, &surface) != VK_SUCCESS)
+		{
+			throw std::runtime_error("failed to create window surface!");
+		}
+	}
+
+	//检查swap chain的三种属性
+	struct SwapChainSupportDetails
+	{
+		//Basic surface capabilities（swap chain中images的最小最大数量，images的最小最大长宽）
+		VkSurfaceCapabilitiesKHR capabilities;
+		//Surface formats（像素格式，颜色空间）
+		std::vector<VkSurfaceFormatKHR> formats;
+		//Available presentation modes
+		std::vector<VkPresentModeKHR> presentModes;
+	};
+
+	//检查physical device的swap chain支持的属性
+	SwapChainSupportDetails querySwapChainSupport(VkPhysicalDevice device)
+	{
+		SwapChainSupportDetails details;
+		//Basic surface capabilities
+		vkGetPhysicalDeviceSurfaceCapabilitiesKHR(device, surface, &details.capabilities);
+		//Surface formats
+		uint32_t formatCount;
+		vkGetPhysicalDeviceSurfaceFormatsKHR(device, surface, &formatCount, nullptr);
+		if (formatCount != 0)
+		{
+			details.formats.resize(formatCount);
+			vkGetPhysicalDeviceSurfaceFormatsKHR(device, surface, &formatCount, details.formats.data());
+		}
+		//Available presentation modes
+		uint32_t presentModeCount;
+		vkGetPhysicalDeviceSurfacePresentModesKHR(device, surface, &presentModeCount, nullptr);
+		if (presentModeCount != 0)
+		{
+			details.presentModes.resize(presentModeCount);
+			vkGetPhysicalDeviceSurfacePresentModesKHR(device, surface, &presentModeCount, details.presentModes.data());
+		}
+
+		return details;
+	}
+
+	//选择Swap chain最佳的surface format
+	VkSurfaceFormatKHR chooseSwapSurfaceFormat(const std::vector<VkSurfaceFormatKHR>& availableFormats)
+	{
+		//优先使用VK_FORMAT_B8R8G8A8_SRGB
+		for (const auto& availableFormat : availableFormats)
+		{
+			if (availableFormat.format == VK_FORMAT_B8G8R8A8_SRGB && availableFormat.colorSpace == VK_COLOR_SPACE_SRGB_NONLINEAR_KHR)
+			{
+				return availableFormat;
+			}
+		}
+
+		//fallback使用第一个支持的格式
+		return availableFormats[0];
+	}
+
+	//选择Swap chain最佳的Presentation mode
+	VkPresentModeKHR chooseSwapPresentMode(const std::vector<VkPresentModeKHR>& availablePresentModes)
+	{
+		//优先使用VK_PRESENT_MODE_MAILBOX_KHR三重缓冲
+		for (const auto& availablePresentMode : availablePresentModes)
+		{
+			if (availablePresentMode == VK_PRESENT_MODE_MAILBOX_KHR)
+			{
+				return availablePresentMode;
+			}
+		}
+		return VK_PRESENT_MODE_FIFO_KHR;
+	}
+
+	//选择Swap chain最佳的Swap extent
+	VkExtent2D chooseSwapExtent(const VkSurfaceCapabilitiesKHR& capabilities)
+	{
+		//capabilities的currentExtent成员是Vulkan返回的宽高用于匹配window的分辨率
+		//但如果其值为uint32_t的最大值，意味着其允许我们主动设置成将swap chain设置成其他分辨率
+		if (capabilities.currentExtent.width != std::numeric_limits<uint32_t>::max())
+		{
+			//意味着不允许我们主动改swap chain分辨率，一定要适配window
+			return capabilities.currentExtent;
+		}
+		else
+		{
+			//Vulkan的分辨率以pixel为单位，而不是屏幕坐标
+			int width, height;
+			//获取window以pixel为单位的分辨率
+			glfwGetFramebufferSize(window, &width, &height);
+			
+			VkExtent2D actualExtent = {
+				static_cast<uint32_t>(width),
+				static_cast<uint32_t>(height)
+			};
+			//在可用范围内尽可能贴近window分辨率
+			actualExtent.width = std::clamp(actualExtent.width, capabilities.minImageExtent.width, capabilities.maxImageExtent.width);
+			actualExtent.height = std::clamp(actualExtent.height, capabilities.minImageExtent.height, capabilities.maxImageExtent.height);
+
+			return actualExtent;
+		}
+	}
+
+	//创建Swap chain
+	void createSwapChain()
+	{
+		SwapChainSupportDetails swapChainSupport = querySwapChainSupport(physicalDevice);
+
+		VkSurfaceFormatKHR surfaceFormat = chooseSwapSurfaceFormat(swapChainSupport.formats);
+		VkPresentModeKHR presentMode = chooseSwapPresentMode(swapChainSupport.presentModes);
+		VkExtent2D extent = chooseSwapExtent(swapChainSupport.capabilities);
+
+		//确定swap chain中的Images数量，至少多一张以确保并行度
+		uint32_t imageCount = swapChainSupport.capabilities.minImageCount + 1;
+		//确保数量不要超过最大数量（maxImageCount为0意味着没上限。
+		if (swapChainSupport.capabilities.maxImageCount > 0 && imageCount > swapChainSupport.capabilities.maxImageCount)
+		{
+			imageCount = swapChainSupport.capabilities.maxImageCount;
+		}
+
+		//创建Swap chain
+		VkSwapchainCreateInfoKHR createInfo{};
+		createInfo.sType = VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR;
+		createInfo.surface = surface;
+		createInfo.minImageCount = imageCount;
+		createInfo.imageFormat = surfaceFormat.format;
+		createInfo.imageColorSpace = surfaceFormat.colorSpace;
+		createInfo.imageExtent = extent;
+		createInfo.imageArrayLayers = 1; // 确定了每一个image组成的layer数量
+		createInfo.imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT; // 确定swap chain的使用目的
+
+		//明确swap chain images在多queue families情况下的使用
+		QueueFamilyIndices indices = findQueueFamilies(physicalDevice);
+		uint32_t queueFamilyIndices[] = { indices.graphicsFamily.value(), indices.presentFamily.value() };
+
+		if (indices.graphicsFamily != indices.presentFamily)
+		{
+			//如果graphics和present为两个queue family，则使用CONCURRENT模式
+			createInfo.imageSharingMode = VK_SHARING_MODE_CONCURRENT;
+			createInfo.queueFamilyIndexCount = 2;
+			createInfo.pQueueFamilyIndices = queueFamilyIndices;
+		}
+		else
+		{
+			//否则使用EXCLUSIVE模式，swap chain同一时间只属于一个queue family
+			createInfo.imageSharingMode = VK_SHARING_MODE_EXCLUSIVE;
+			createInfo.queueFamilyIndexCount = 0; // Optional
+			createInfo.pQueueFamilyIndices = nullptr; // Optional
+		}
+		//确定images被应用的变换（通常为旋转90°、水平翻转等），我们不需要任何变换
+		createInfo.preTransform = swapChainSupport.capabilities.currentTransform;
+		//确定和window system中其他window的透明度混合模式
+		createInfo.compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR;
+		//确定present mode
+		createInfo.presentMode = presentMode;
+		//确定被其他window遮挡的像素模式
+		createInfo.clipped = VK_TRUE;
+		//确定老的swap chain
+		createInfo.oldSwapchain = VK_NULL_HANDLE;
+
+		if (vkCreateSwapchainKHR(device, &createInfo, nullptr, &swapChain) != VK_SUCCESS)
+		{
+			throw std::runtime_error("failed to create swap chain!");
+		}
+
+		//创建完swap chain后存储Images的handle
+		//注意我们之前设置的imageCount只是确定swapchain中image的最小数量，实际可能会更多，因此需要重新取值
+		vkGetSwapchainImagesKHR(device, swapChain, &imageCount, nullptr);
+		swapChainImages.resize(imageCount);
+		vkGetSwapchainImagesKHR(device, swapChain, &imageCount, swapChainImages.data());
+		//存储format和extent
+		swapChainImageFormat = surfaceFormat.format;
+		swapChainExtent = extent;
 	}
 #pragma endregion
 
