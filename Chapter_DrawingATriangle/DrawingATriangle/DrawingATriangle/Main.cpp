@@ -92,6 +92,8 @@ private:
 	//存储swap chain的format和extent，未来会用到
 	VkFormat swapChainImageFormat;
 	VkExtent2D swapChainExtent;
+	//存储swap chain images的image views
+	std::vector<VkImageView> swapChainImageViews;
 
 	//所有要启用的device extensions
 	const std::vector<const char*> deviceExtensions = {
@@ -123,6 +125,7 @@ private:
 		pickPhysicalDevice();
 		createLogicalDevice();
 		createSwapChain();
+		createImageViews();
 	}
 
 	//mainloop来开始渲染每一帧
@@ -139,6 +142,11 @@ private:
 	//一旦window被关闭，我们将在**cleanup**函数中确保释放我们用到的所有资源
 	void cleanup()
 	{
+		//销毁swap chain对应的image views，image view是我们手动创建的，因此也要手动销毁
+		for (auto imageView : swapChainImageViews)
+		{
+			vkDestroyImageView(device, imageView, nullptr);
+		}
 		//销毁Swap chain
 		vkDestroySwapchainKHR(device, swapChain, nullptr);
 
@@ -717,6 +725,40 @@ private:
 		//存储format和extent
 		swapChainImageFormat = surfaceFormat.format;
 		swapChainExtent = extent;
+	}
+
+	//为swap chain中每个VkImage创建ImageView
+	void createImageViews()
+	{
+		swapChainImageViews.resize(swapChainImages.size());
+		for (size_t i = 0; i < swapChainImages.size(); i++)
+		{
+			VkImageViewCreateInfo createInfo{};
+			createInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+			//对应的Image
+			createInfo.image = swapChainImages[i];
+			//viewType和format字段指定如何解释图像数据
+			//viewType包括1D、2D、3D纹理和贴图
+			createInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
+			createInfo.format = swapChainImageFormat;
+			//components字段允许我们混合颜色通道，可以实现不同通道映射，在这里我们使用默认映射
+			createInfo.components.r = VK_COMPONENT_SWIZZLE_IDENTITY;
+			createInfo.components.g = VK_COMPONENT_SWIZZLE_IDENTITY;
+			createInfo.components.b = VK_COMPONENT_SWIZZLE_IDENTITY;
+			createInfo.components.a = VK_COMPONENT_SWIZZLE_IDENTITY;
+			//subsresourceRange描述Image的用途和可以访问image的哪些部分，我们在这里将其作为Color target
+			createInfo.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+			createInfo.subresourceRange.baseMipLevel = 0;
+			createInfo.subresourceRange.levelCount = 1;
+			createInfo.subresourceRange.baseArrayLayer = 0;
+			createInfo.subresourceRange.layerCount = 1;
+
+			//创建ImageView
+			if (vkCreateImageView(device, &createInfo, nullptr, &swapChainImageViews[i]) != VK_SUCCESS)
+			{
+				throw std::runtime_error("failed to create image views!");
+			}
+		}
 	}
 #pragma endregion
 
