@@ -126,6 +126,7 @@ private:
 		createLogicalDevice();
 		createSwapChain();
 		createImageViews();
+		createGraphicsPipeline();
 	}
 
 	//mainloop来开始渲染每一帧
@@ -762,7 +763,15 @@ private:
 	}
 #pragma endregion
 
+#pragma region Graphics pipeline basics
 
+	//创建pipeline
+	void createGraphicsPipeline()
+	{
+
+	}
+
+#pragma endregion
 };
 
 int main()
