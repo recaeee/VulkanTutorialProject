@@ -96,6 +96,10 @@ private:
 	VkExtent2D swapChainExtent;
 	//存储swap chain images的image views
 	std::vector<VkImageView> swapChainImageViews;
+	//存储render pass
+	VkRenderPass renderPass;
+	//存储pipeline layout，用来指定创建管线时的uniform值
+	VkPipelineLayout pipelineLayout;
 
 	//所有要启用的device extensions
 	const std::vector<const char*> deviceExtensions = {
@@ -128,6 +132,7 @@ private:
 		createLogicalDevice();
 		createSwapChain();
 		createImageViews();
+		createRenderPass();
 		createGraphicsPipeline();
 	}
 
@@ -145,6 +150,10 @@ private:
 	//一旦window被关闭，我们将在**cleanup**函数中确保释放我们用到的所有资源
 	void cleanup()
 	{
+		//销毁pipeline layout
+		vkDestroyPipelineLayout(device, pipelineLayout, nullptr);
+		//销毁render pass
+		vkDestroyRenderPass(device, renderPass, nullptr);
 		//销毁swap chain对应的image views，image view是我们手动创建的，因此也要手动销毁
 		for (auto imageView : swapChainImageViews)
 		{
@@ -841,6 +850,55 @@ private:
 		viewportState.sType = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO;
 		viewportState.viewportCount = 1;
 		viewportState.scissorCount = 1;
+
+		//配置光栅化器
+		VkPipelineRasterizationStateCreateInfo rasterizer{};
+		rasterizer.sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO;
+		rasterizer.depthClampEnable = VK_FALSE; // 如果depthClampEnable为true，超出近、远平面的片元会被Clamp而不是丢弃它们。这在绘制深度图等一些特殊情况有用，使用它需要一个GPU feature。
+		rasterizer.rasterizerDiscardEnable = VK_FALSE; // 该值为true时，会在光栅化阶段丢弃所有片元。
+		rasterizer.polygonMode = VK_POLYGON_MODE_FILL; // 决定根据几何图形如何生成片元，可以是FILL、LINE、POINT，后两者需要GPU feature
+		rasterizer.lineWidth = 1.0f; //超过1.0时，需要启用wideLines GPU feature
+		rasterizer.cullMode = VK_CULL_MODE_BACK_BIT; //面剔除类型
+		rasterizer.frontFace = VK_FRONT_FACE_CLOCKWISE; //确定正面方向
+		rasterizer.depthBiasEnable = VK_FALSE; // 可以设置深度偏移
+		rasterizer.depthBiasConstantFactor = 0.0f; // Optional
+		rasterizer.depthBiasClamp = 0.0f; // Optional
+		rasterizer.depthBiasSlopeFactor = 0.0f; // Optional
+
+		//配置多重采样
+		VkPipelineMultisampleStateCreateInfo multisampling{};
+		multisampling.sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
+		multisampling.sampleShadingEnable = VK_FALSE;
+		multisampling.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
+		multisampling.minSampleShading = 1.0f; // Optional
+		multisampling.pSampleMask = nullptr; // Optional
+		multisampling.alphaToCoverageEnable = VK_FALSE; // Optional
+		multisampling.alphaToOneEnable = VK_FALSE; // Optional
+
+		//配置颜色混合
+		VkPipelineColorBlendAttachmentState colorBlendAttachment{};
+		colorBlendAttachment.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
+		colorBlendAttachment.blendEnable = VK_FALSE;
+		colorBlendAttachment.srcColorBlendFactor = VK_BLEND_FACTOR_ONE; // Optional
+		colorBlendAttachment.dstColorBlendFactor = VK_BLEND_FACTOR_ZERO; // Optional
+		colorBlendAttachment.colorBlendOp = VK_BLEND_OP_ADD; // Optional
+		colorBlendAttachment.srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE; // Optional
+		colorBlendAttachment.dstAlphaBlendFactor = VK_BLEND_FACTOR_ZERO; // Optional
+		colorBlendAttachment.alphaBlendOp = VK_BLEND_OP_ADD; // Optional
+
+		//创建pipeline layout，指定shader uniform值
+		VkPipelineLayoutCreateInfo pipelineLayoutInfo{};
+		pipelineLayoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+		pipelineLayoutInfo.setLayoutCount = 0; // Optional
+		pipelineLayoutInfo.pSetLayouts = nullptr; // Optional
+		pipelineLayoutInfo.pushConstantRangeCount = 0; // Optional
+		pipelineLayoutInfo.pPushConstantRanges = nullptr; // Optinal
+
+		if (vkCreatePipelineLayout(device, &pipelineLayoutInfo, nullptr, &pipelineLayout) != VK_SUCCESS)
+		{
+			throw std::runtime_error("failed to create pipeline layout!");
+		}
+
 	}
 
 	//读取文件，并以vector返回byte array
@@ -879,6 +937,48 @@ private:
 		}
 
 		return shaderModule;
+	}
+
+	//创建Render pass
+	void createRenderPass()
+	{
+		//创建attachment描述符
+		VkAttachmentDescription colorAttachment{};
+		colorAttachment.format = swapChainImageFormat; //color attachment的format需要和swap chain images的format匹配
+		colorAttachment.samples = VK_SAMPLE_COUNT_1_BIT;
+		//loadOp和storeOp应用于color和depth
+		colorAttachment.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+		colorAttachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+		//stencilLoadOp和stencilStoreOp应用于stencil
+		colorAttachment.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+		colorAttachment.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+		//render pass前image期望的格式，结束后image将要转变的格式
+		colorAttachment.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+		colorAttachment.finalLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+
+		//subpass使用的attachment引用
+		VkAttachmentReference colorAttachmentRef{};
+		colorAttachmentRef.attachment = 0;
+		colorAttachmentRef.layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+		//subpass
+		VkSubpassDescription subpass{};
+		subpass.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS; // Vulkan未来会支持compute subpasses，所以我们需要显式告诉它是一个graphics subpass。
+		//指定subpass的attachment引用
+		subpass.colorAttachmentCount = 1;
+		subpass.pColorAttachments = &colorAttachmentRef;
+
+		//创建render pass
+		VkRenderPassCreateInfo renderPassInfo{};
+		renderPassInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO;
+		renderPassInfo.attachmentCount = 1;
+		renderPassInfo.pAttachments = &colorAttachment;
+		renderPassInfo.subpassCount = 1;
+		renderPassInfo.pSubpasses = &subpass;
+
+		if (vkCreateRenderPass(device, &renderPassInfo, nullptr, &renderPass) != VK_SUCCESS)
+		{
+			throw std::runtime_error("failed to create render pass!");
+		}
 	}
 
 #pragma endregion
