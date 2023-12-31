@@ -100,6 +100,8 @@ private:
 	VkRenderPass renderPass;
 	//存储pipeline layout，用来指定创建管线时的uniform值
 	VkPipelineLayout pipelineLayout;
+	//存储pipeline
+	VkPipeline graphicsPipeline;
 
 	//所有要启用的device extensions
 	const std::vector<const char*> deviceExtensions = {
@@ -150,6 +152,8 @@ private:
 	//一旦window被关闭，我们将在**cleanup**函数中确保释放我们用到的所有资源
 	void cleanup()
 	{
+		//销毁pipeline
+		vkDestroyPipeline(device, graphicsPipeline, nullptr);
 		//销毁pipeline layout
 		vkDestroyPipelineLayout(device, pipelineLayout, nullptr);
 		//销毁render pass
@@ -161,25 +165,19 @@ private:
 		}
 		//销毁Swap chain
 		vkDestroySwapchainKHR(device, swapChain, nullptr);
-
 		//销毁VkDevice
 		vkDestroyDevice(device, nullptr);
-
 		//销毁DebugUtilsMessenger
 		if (enableValidationLayers)
 		{
 			DestroyDebugUtilsMeseengerEXT(instance, debugMessenger, nullptr);
 		}
-		
 		//销毁Window surface
 		vkDestroySurfaceKHR(instance, surface, nullptr);
-
 		//VkInstance只应该在程序退出前一刻销毁，所有其他的Vulkan资源都应该在instance销毁前释放
 		vkDestroyInstance(instance, nullptr);
-
 		//销毁window
 		glfwDestroyWindow(window);
-
 		//结束GLFW本身
 		glfwTerminate();
 	}
@@ -802,10 +800,6 @@ private:
 
 		VkPipelineShaderStageCreateInfo shaderStages[] = { vertShaderStageInfo, fragShaderStageInfo };
 
-		//创建完pipeline后可以立刻销毁shader modules
-		vkDestroyShaderModule(device, fragShaderModule, nullptr);
-		vkDestroyShaderModule(device, vertShaderModule, nullptr);
-
 		//顶点输入
 		VkPipelineVertexInputStateCreateInfo vertexInputInfo{};
 		vertexInputInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
@@ -875,7 +869,7 @@ private:
 		multisampling.alphaToCoverageEnable = VK_FALSE; // Optional
 		multisampling.alphaToOneEnable = VK_FALSE; // Optional
 
-		//配置颜色混合
+		//配置颜色混合，需要2个结构体
 		VkPipelineColorBlendAttachmentState colorBlendAttachment{};
 		colorBlendAttachment.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
 		colorBlendAttachment.blendEnable = VK_FALSE;
@@ -885,6 +879,17 @@ private:
 		colorBlendAttachment.srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE; // Optional
 		colorBlendAttachment.dstAlphaBlendFactor = VK_BLEND_FACTOR_ZERO; // Optional
 		colorBlendAttachment.alphaBlendOp = VK_BLEND_OP_ADD; // Optional
+
+		VkPipelineColorBlendStateCreateInfo colorBlending{};
+		colorBlending.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
+		colorBlending.logicOpEnable = VK_FALSE;
+		colorBlending.logicOp = VK_LOGIC_OP_COPY; // Optional
+		colorBlending.attachmentCount = 1;
+		colorBlending.pAttachments = &colorBlendAttachment;
+		colorBlending.blendConstants[0] = 0.0f; // Optional
+		colorBlending.blendConstants[1] = 0.0f; // Optional
+		colorBlending.blendConstants[2] = 0.0f; // Optional
+		colorBlending.blendConstants[3] = 0.0f; // Optional
 
 		//创建pipeline layout，指定shader uniform值
 		VkPipelineLayoutCreateInfo pipelineLayoutInfo{};
@@ -899,6 +904,37 @@ private:
 			throw std::runtime_error("failed to create pipeline layout!");
 		}
 
+		//创建pipeline
+		VkGraphicsPipelineCreateInfo pipelineInfo{};
+		pipelineInfo.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
+		//shader stages
+		pipelineInfo.stageCount = 2;
+		pipelineInfo.pStages = shaderStages;
+		//fixed-function
+		pipelineInfo.pVertexInputState = &vertexInputInfo;
+		pipelineInfo.pInputAssemblyState = &inputAssembly;
+		pipelineInfo.pViewportState = &viewportState;
+		pipelineInfo.pRasterizationState = &rasterizer;
+		pipelineInfo.pMultisampleState = &multisampling;
+		pipelineInfo.pDepthStencilState = nullptr; // Optional
+		pipelineInfo.pColorBlendState = &colorBlending;
+		pipelineInfo.pDynamicState = &dynamicState;
+		//pipeline layout
+		pipelineInfo.layout = pipelineLayout;
+		//render pass
+		pipelineInfo.renderPass = renderPass;
+		pipelineInfo.subpass = 0;//subpass index
+		pipelineInfo.basePipelineHandle = VK_NULL_HANDLE; // Optional
+		pipelineInfo.basePipelineIndex = -1; // Optional
+
+		if (vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1, &pipelineInfo, nullptr, &graphicsPipeline) != VK_SUCCESS)
+		{
+			throw std::runtime_error("failed to create graphics pipeline!");
+		}
+
+		//创建完pipeline后立刻销毁shader modules
+		vkDestroyShaderModule(device, fragShaderModule, nullptr);
+		vkDestroyShaderModule(device, vertShaderModule, nullptr);
 	}
 
 	//读取文件，并以vector返回byte array
