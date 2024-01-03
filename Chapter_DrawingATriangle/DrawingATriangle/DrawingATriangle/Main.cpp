@@ -102,6 +102,12 @@ private:
 	VkPipelineLayout pipelineLayout;
 	//存储pipeline
 	VkPipeline graphicsPipeline;
+	//存储framebuffers
+	std::vector<VkFramebuffer> swapChainFramebuffers;
+	//存储command pool
+	VkCommandPool commandPool;
+	//存储command buffer
+	VkCommandBuffer commandBuffer;
 
 	//所有要启用的device extensions
 	const std::vector<const char*> deviceExtensions = {
@@ -136,6 +142,9 @@ private:
 		createImageViews();
 		createRenderPass();
 		createGraphicsPipeline();
+		createFramebuffers();
+		createCommandPool();
+		createCommandBuffer();
 	}
 
 	//mainloop来开始渲染每一帧
@@ -152,6 +161,13 @@ private:
 	//一旦window被关闭，我们将在**cleanup**函数中确保释放我们用到的所有资源
 	void cleanup()
 	{
+		//销毁command pool
+		vkDestroyCommandPool(device, commandPool, nullptr);
+		//销毁framebuffers，需要在renderpass、imageviews销毁前、一帧绘制完后销毁
+		for (auto framebuffer : swapChainFramebuffers)
+		{
+			vkDestroyFramebuffer(device, framebuffer, nullptr);
+		}
 		//销毁pipeline
 		vkDestroyPipeline(device, graphicsPipeline, nullptr);
 		//销毁pipeline layout
@@ -1015,6 +1031,56 @@ private:
 		{
 			throw std::runtime_error("failed to create render pass!");
 		}
+	}
+
+#pragma endregion
+
+#pragma region Drawing
+	//为swap chain的每个image创建framebuffers
+	void createFramebuffers()
+	{
+		swapChainFramebuffers.resize(swapChainImageViews.size());
+		for (size_t i = 0; i < swapChainImageViews.size(); i++)
+		{
+			VkImageView attachments[] = {
+				swapChainImageViews[i]
+			};
+
+			VkFramebufferCreateInfo framebufferInfo{};
+			framebufferInfo.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
+			framebufferInfo.renderPass = renderPass; // 要兼容的render pass
+			framebufferInfo.attachmentCount = 1;
+			framebufferInfo.pAttachments = attachments; // 对应的imageviews
+			framebufferInfo.width = swapChainExtent.width;
+			framebufferInfo.height = swapChainExtent.height;
+			framebufferInfo.layers = 1;
+
+			if (vkCreateFramebuffer(device, &framebufferInfo, nullptr, &swapChainFramebuffers[i]) != VK_SUCCESS)
+			{
+				throw std::runtime_error("failed to create framebuffer!");
+			}
+		}
+	}
+
+	void createCommandPool()
+	{
+		QueueFamilyIndices queueFamilyIndices = findQueueFamilies(physicalDevice);
+
+		VkCommandPoolCreateInfo poolInfo{};
+		poolInfo.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO; // Allow command buffers to be rerecorded individually, without this flag they all have to be reset together
+		poolInfo.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
+	
+		poolInfo.queueFamilyIndex = queueFamilyIndices.graphicsFamily.value(); // 单个pool的指令只能提交到一个queue
+
+		if (vkCreateCommandPool(device, &poolInfo, nullptr, &commandPool) != VK_SUCCESS)
+		{
+			throw std::runtime_error("failed to create command pool!");
+		}
+	}
+
+	void createCommandBuffer()
+	{
+
 	}
 
 #pragma endregion
