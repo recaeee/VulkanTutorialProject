@@ -108,6 +108,12 @@ private:
 	VkCommandPool commandPool;
 	//存储command buffer
 	VkCommandBuffer commandBuffer;
+	//存储从swapchain中取得image的semaphore
+	VkSemaphore imageAvailableSemaphore;
+	//存储image渲染完毕的semaphore
+	VkSemaphore renderFinishedSemaphore;
+	//存储保证一次只渲染一帧的fence
+	VkFence inFlightFence;
 
 	//所有要启用的device extensions
 	const std::vector<const char*> deviceExtensions = {
@@ -155,12 +161,18 @@ private:
 		{
 			//处理窗口事件并触发事件回调函数、如鼠标、键盘事件、窗口尺寸的调整、窗口关闭等
 			glfwPollEvents();
+			//绘制一帧
+			drawFrame();
 		}
 	}
 
 	//一旦window被关闭，我们将在**cleanup**函数中确保释放我们用到的所有资源
 	void cleanup()
 	{
+		//当程序结束，并且所有commands都完成了，并且没有更多的同步被需要时，semaphores和fence需要被销毁
+		vkDestroySemaphore(device, imageAvailableSemaphore, nullptr);
+		vkDestroySemaphore(device, renderFinishedSemaphore, nullptr);
+		vkDestroyFence(device, inFlightFence, nullptr);
 		//销毁command pool
 		vkDestroyCommandPool(device, commandPool, nullptr);
 		//销毁framebuffers，需要在renderpass、imageviews销毁前、一帧绘制完后销毁
@@ -1107,8 +1119,75 @@ private:
 		}
 
 		//录制开始，先启动一个render pass
+		VkRenderPassBeginInfo renderPassInfo{};
+		renderPassInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
+		//render pass自身和要绑定的attachments
+		renderPassInfo.renderPass = renderPass;
+		renderPassInfo.framebuffer = swapChainFramebuffers[imageIndex];
+		//渲染区域的尺寸
+		renderPassInfo.renderArea.offset = { 0, 0 };
+		renderPassInfo.renderArea.extent = swapChainExtent;
+		//在使用VK_ATTACHMENT_LOAD_OP_CLEAR时使用的Clear Values
+		VkClearValue clearColor = { {0.0f, 0.0f, 0.0f, 1.0f} };
+		renderPassInfo.clearValueCount = 1;
+		renderPassInfo.pClearValues = &clearColor;
+
+		vkCmdBeginRenderPass(commandBuffer, &renderPassInfo, VK_SUBPASS_CONTENTS_INLINE);
+
+		//绑定graphics pipeline
+		vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, graphicsPipeline);
+		//配置dynamic states
+		VkViewport viewport{};
+		viewport.x = 0.0f;
+		viewport.y = 0.0f;
+		viewport.width = static_cast<float>(swapChainExtent.width);
+		viewport.height = static_cast<float>(swapChainExtent.height);
+		viewport.minDepth = 0.0f;
+		viewport.maxDepth = 1.0f;
+		vkCmdSetViewport(commandBuffer, 0, 1, &viewport);
+
+		VkRect2D scissor{};
+		scissor.offset = { 0, 0 };
+		scissor.extent = swapChainExtent;
+		vkCmdSetScissor(commandBuffer, 0, 1, &scissor);
+		//绘制指令
+		vkCmdDraw(commandBuffer, 3, 1, 0, 0);
+		//结束render pass
+		vkCmdEndRenderPass(commandBuffer);
+		//结束command buffer录制
+		if (vkEndCommandBuffer(commandBuffer) != VK_SUCCESS)
+		{
+			throw std::runtime_error("failed to record command buffer!");
+		}
 	}
 
+	void drawFrame()
+	{
+		//等待上一帧完成
+		vkWaitForFences(device, 1, &inFlightFence, VK_TRUE, UINT64_MAX);
+		//重置fence
+		vkResetFences(device, 1, &inFlightFence);
+	}
+
+	void createSyncObjects()
+	{
+		VkSemaphoreCreateInfo semaphoreInfo{};
+		semaphoreInfo.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
+
+		VkFenceCreateInfo fenceInfo{};
+		fenceInfo.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
+		//创建时置为signaled，避免第一帧block
+		fenceInfo.flags = VK_FENCE_CREATE_SIGNALED_BIT;
+
+		if (vkCreateSemaphore(device, &semaphoreInfo, nullptr, &imageAvailableSemaphore) != VK_SUCCESS
+			||
+			vkCreateSemaphore(device, &semaphoreInfo, nullptr, &renderFinishedSemaphore) != VK_SUCCESS
+			||
+			vkCreateFence(device, &fenceInfo, nullptr, &inFlightFence) != VK_SUCCESS)
+		{
+			throw std::runtime_error("failed to create semaphores!");
+		}
+	}
 #pragma endregion
 };
 
