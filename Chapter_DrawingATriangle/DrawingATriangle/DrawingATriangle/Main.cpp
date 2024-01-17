@@ -151,6 +151,7 @@ private:
 		createFramebuffers();
 		createCommandPool();
 		createCommandBuffer();
+		createSyncObjects();
 	}
 
 	//mainloop来开始渲染每一帧
@@ -164,6 +165,9 @@ private:
 			//绘制一帧
 			drawFrame();
 		}
+
+		//等待logical device完成所有操作，再退出mainLoop
+		vkDeviceWaitIdle(device);
 	}
 
 	//一旦window被关闭，我们将在**cleanup**函数中确保释放我们用到的所有资源
@@ -1031,6 +1035,15 @@ private:
 		subpass.colorAttachmentCount = 1;
 		subpass.pColorAttachments = &colorAttachmentRef;
 
+		//配置subpass dependency
+		VkSubpassDependency dependency{};
+		dependency.srcSubpass = VK_SUBPASS_EXTERNAL; // 被依赖的subpass
+		dependency.dstSubpass = 0; //依赖的subpass
+		dependency.srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+		dependency.srcAccessMask = 0;
+		dependency.dstStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+		dependency.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+
 		//创建render pass
 		VkRenderPassCreateInfo renderPassInfo{};
 		renderPassInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO;
@@ -1038,6 +1051,8 @@ private:
 		renderPassInfo.pAttachments = &colorAttachment;
 		renderPassInfo.subpassCount = 1;
 		renderPassInfo.pSubpasses = &subpass;
+		renderPassInfo.dependencyCount = 1;
+		renderPassInfo.pDependencies = &dependency;
 
 		if (vkCreateRenderPass(device, &renderPassInfo, nullptr, &renderPass) != VK_SUCCESS)
 		{
@@ -1167,6 +1182,50 @@ private:
 		vkWaitForFences(device, 1, &inFlightFence, VK_TRUE, UINT64_MAX);
 		//重置fence
 		vkResetFences(device, 1, &inFlightFence);
+		//从swap chain中获取一张image
+		uint32_t imageIndex;
+		vkAcquireNextImageKHR(device, swapChain, UINT64_MAX, imageAvailableSemaphore, VK_NULL_HANDLE, &imageIndex);
+		//重置command buffer，确保其可以被录制
+		vkResetCommandBuffer(commandBuffer, 0);
+		//录制指令
+		recordCommandBuffer(commandBuffer, imageIndex);
+		//提交command buffer到queue中，并且配置同步
+		VkSubmitInfo submitInfo{};
+		submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+		//配置同步
+		VkSemaphore waitSemaphores[] = { imageAvailableSemaphore };
+		VkPipelineStageFlags waitStages[] = { VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT };
+		submitInfo.waitSemaphoreCount = 1;
+		submitInfo.pWaitSemaphores = waitSemaphores;
+		submitInfo.pWaitDstStageMask = waitStages;
+		//配置要提交的command buffer
+		submitInfo.commandBufferCount = 1;
+		submitInfo.pCommandBuffers = &commandBuffer;
+		//配置command buffer执行完毕后要signal的semaphores
+		VkSemaphore signalSemaphores[] = { renderFinishedSemaphore };
+		submitInfo.signalSemaphoreCount = 1;
+		submitInfo.pSignalSemaphores = signalSemaphores;
+		//提交Command buffer
+		if (vkQueueSubmit(graphicsQueue, 1, &submitInfo, inFlightFence) != VK_SUCCESS)
+		{
+			throw std::runtime_error("failed to submit draw command buffer!");
+		}
+
+		//Presentation
+		VkPresentInfoKHR presentInfo{};
+		presentInfo.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR;
+		//等待command buffer执行完毕
+		presentInfo.waitSemaphoreCount = 1;
+		presentInfo.pWaitSemaphores = signalSemaphores;
+		//呈现image的swap chains和每个swap chain的image index
+		VkSwapchainKHR swapChains[] = { swapChain };
+		presentInfo.swapchainCount = 1;
+		presentInfo.pSwapchains = swapChains;
+		presentInfo.pImageIndices = &imageIndex;
+		//指定一个VkResult数组，来检查每个swap chain的presentation是否成功
+		presentInfo.pResults = nullptr; // Optional
+		//向swap chain提交一个present an image的请求
+		vkQueuePresentKHR(presentQueue, &presentInfo);
 	}
 
 	void createSyncObjects()
