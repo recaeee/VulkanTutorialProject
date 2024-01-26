@@ -535,7 +535,7 @@ private:
 		QueueFamilyIndices indices = findQueueFamilies(physicalDevice);
 		// 目前，我们需要Graphics Queue和Present Queue，因此使用Vector存储queueCreateInfos。
 		std::vector<VkDeviceQueueCreateInfo> queueCreateInfos;
-		std::vector<uint32_t> uniqueQueueFamilies = { indices.graphicsFamily.value(),
+		std::set<uint32_t> uniqueQueueFamilies = { indices.graphicsFamily.value(),
 			indices.presentFamily.value() };
 		float queuePriority = 1.0f;
 		//使用一个循环创建所有QueueCreateInfo
