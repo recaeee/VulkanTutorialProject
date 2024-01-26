@@ -23,6 +23,8 @@
 //使用常量而不是硬编码的width和height，因为我们会多次引用这些值
 const uint32_t WIDTH = 800;
 const uint32_t HEIGHT = 600;
+//多少帧应该同时工作
+const int MAX_FRAMES_IN_FLIGHTS = 2;
 
 //要使用的validation layers
 const std::vector<const char*> validationLayers = {
@@ -107,13 +109,15 @@ private:
 	//存储command pool
 	VkCommandPool commandPool;
 	//存储command buffer
-	VkCommandBuffer commandBuffer;
+	std::vector<VkCommandBuffer> commandBuffers;
 	//存储从swapchain中取得image的semaphore
-	VkSemaphore imageAvailableSemaphore;
+	std::vector<VkSemaphore> imageAvailableSemaphores;
 	//存储image渲染完毕的semaphore
-	VkSemaphore renderFinishedSemaphore;
+	std::vector<VkSemaphore> renderFinishedSemaphores;
 	//存储保证一次只渲染一帧的fence
-	VkFence inFlightFence;
+	std::vector<VkFence> inFlightFences;
+	//当前帧索引
+	uint32_t currentFrame = 0;
 
 	//所有要启用的device extensions
 	const std::vector<const char*> deviceExtensions = {
@@ -150,7 +154,7 @@ private:
 		createGraphicsPipeline();
 		createFramebuffers();
 		createCommandPool();
-		createCommandBuffer();
+		createCommandBuffers();
 		createSyncObjects();
 	}
 
@@ -174,9 +178,13 @@ private:
 	void cleanup()
 	{
 		//当程序结束，并且所有commands都完成了，并且没有更多的同步被需要时，semaphores和fence需要被销毁
-		vkDestroySemaphore(device, imageAvailableSemaphore, nullptr);
-		vkDestroySemaphore(device, renderFinishedSemaphore, nullptr);
-		vkDestroyFence(device, inFlightFence, nullptr);
+		for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHTS; i++)
+		{
+			vkDestroySemaphore(device, imageAvailableSemaphores[i], nullptr);
+			vkDestroySemaphore(device, renderFinishedSemaphores[i], nullptr);
+			vkDestroyFence(device, inFlightFences[i], nullptr);
+		}
+
 		//销毁command pool
 		vkDestroyCommandPool(device, commandPool, nullptr);
 		//销毁framebuffers，需要在renderpass、imageviews销毁前、一帧绘制完后销毁
@@ -1105,16 +1113,17 @@ private:
 		}
 	}
 
-	void createCommandBuffer()
+	void createCommandBuffers()
 	{
 		//从command pool中分配command buffer
+		commandBuffers.resize(MAX_FRAMES_IN_FLIGHTS);
 		VkCommandBufferAllocateInfo allocInfo{};
 		allocInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
 		allocInfo.commandPool = commandPool;
 		allocInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
-		allocInfo.commandBufferCount = 1;
+		allocInfo.commandBufferCount = (uint32_t)commandBuffers.size();
 
-		if (vkAllocateCommandBuffers(device, &allocInfo, &commandBuffer) != VK_SUCCESS)
+		if (vkAllocateCommandBuffers(device, &allocInfo, commandBuffers.data()) != VK_SUCCESS)
 		{
 			throw std::runtime_error("failed to allocate command buffers!");
 		}
@@ -1179,34 +1188,34 @@ private:
 	void drawFrame()
 	{
 		//等待上一帧完成
-		vkWaitForFences(device, 1, &inFlightFence, VK_TRUE, UINT64_MAX);
+		vkWaitForFences(device, 1, &inFlightFences[currentFrame], VK_TRUE, UINT64_MAX);
 		//重置fence
-		vkResetFences(device, 1, &inFlightFence);
+		vkResetFences(device, 1, &inFlightFences[currentFrame]);
 		//从swap chain中获取一张image
 		uint32_t imageIndex;
-		vkAcquireNextImageKHR(device, swapChain, UINT64_MAX, imageAvailableSemaphore, VK_NULL_HANDLE, &imageIndex);
+		vkAcquireNextImageKHR(device, swapChain, UINT64_MAX, imageAvailableSemaphores[currentFrame], VK_NULL_HANDLE, &imageIndex);
 		//重置command buffer，确保其可以被录制
-		vkResetCommandBuffer(commandBuffer, 0);
+		vkResetCommandBuffer(commandBuffers[currentFrame], 0);
 		//录制指令
-		recordCommandBuffer(commandBuffer, imageIndex);
+		recordCommandBuffer(commandBuffers[currentFrame], imageIndex);
 		//提交command buffer到queue中，并且配置同步
 		VkSubmitInfo submitInfo{};
 		submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
 		//配置同步
-		VkSemaphore waitSemaphores[] = { imageAvailableSemaphore };
+		VkSemaphore waitSemaphores[] = { imageAvailableSemaphores[currentFrame]};
 		VkPipelineStageFlags waitStages[] = { VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT };
 		submitInfo.waitSemaphoreCount = 1;
 		submitInfo.pWaitSemaphores = waitSemaphores;
 		submitInfo.pWaitDstStageMask = waitStages;
 		//配置要提交的command buffer
 		submitInfo.commandBufferCount = 1;
-		submitInfo.pCommandBuffers = &commandBuffer;
+		submitInfo.pCommandBuffers = &commandBuffers[currentFrame];
 		//配置command buffer执行完毕后要signal的semaphores
-		VkSemaphore signalSemaphores[] = { renderFinishedSemaphore };
+		VkSemaphore signalSemaphores[] = { renderFinishedSemaphores[currentFrame]};
 		submitInfo.signalSemaphoreCount = 1;
 		submitInfo.pSignalSemaphores = signalSemaphores;
 		//提交Command buffer
-		if (vkQueueSubmit(graphicsQueue, 1, &submitInfo, inFlightFence) != VK_SUCCESS)
+		if (vkQueueSubmit(graphicsQueue, 1, &submitInfo, inFlightFences[currentFrame]) != VK_SUCCESS)
 		{
 			throw std::runtime_error("failed to submit draw command buffer!");
 		}
@@ -1226,10 +1235,17 @@ private:
 		presentInfo.pResults = nullptr; // Optional
 		//向swap chain提交一个present an image的请求
 		vkQueuePresentKHR(presentQueue, &presentInfo);
+
+		//递进到下一帧
+		currentFrame = (currentFrame + 1) % MAX_FRAMES_IN_FLIGHTS;
 	}
 
 	void createSyncObjects()
 	{
+		imageAvailableSemaphores.resize(MAX_FRAMES_IN_FLIGHTS);
+		renderFinishedSemaphores.resize(MAX_FRAMES_IN_FLIGHTS);
+		inFlightFences.resize(MAX_FRAMES_IN_FLIGHTS);
+
 		VkSemaphoreCreateInfo semaphoreInfo{};
 		semaphoreInfo.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
 
@@ -1238,13 +1254,16 @@ private:
 		//创建时置为signaled，避免第一帧block
 		fenceInfo.flags = VK_FENCE_CREATE_SIGNALED_BIT;
 
-		if (vkCreateSemaphore(device, &semaphoreInfo, nullptr, &imageAvailableSemaphore) != VK_SUCCESS
-			||
-			vkCreateSemaphore(device, &semaphoreInfo, nullptr, &renderFinishedSemaphore) != VK_SUCCESS
-			||
-			vkCreateFence(device, &fenceInfo, nullptr, &inFlightFence) != VK_SUCCESS)
+		for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHTS; i++)
 		{
-			throw std::runtime_error("failed to create semaphores!");
+			if (vkCreateSemaphore(device, &semaphoreInfo, nullptr, &imageAvailableSemaphores[i]) != VK_SUCCESS
+				||
+				vkCreateSemaphore(device, &semaphoreInfo, nullptr, &renderFinishedSemaphores[i]) != VK_SUCCESS
+				||
+				vkCreateFence(device, &fenceInfo, nullptr, &inFlightFences[i]) != VK_SUCCESS)
+			{
+				throw std::runtime_error("failed to create semaphores!");
+			}
 		}
 	}
 #pragma endregion
