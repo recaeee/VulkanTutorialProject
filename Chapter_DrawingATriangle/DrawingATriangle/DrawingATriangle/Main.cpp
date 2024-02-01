@@ -177,6 +177,16 @@ private:
 	//一旦window被关闭，我们将在**cleanup**函数中确保释放我们用到的所有资源
 	void cleanup()
 	{
+		cleanupSwapChain();
+
+		//销毁pipeline
+		vkDestroyPipeline(device, graphicsPipeline, nullptr);
+		//销毁pipeline layout
+		vkDestroyPipelineLayout(device, pipelineLayout, nullptr);
+
+		//销毁render pass
+		vkDestroyRenderPass(device, renderPass, nullptr);
+
 		//当程序结束，并且所有commands都完成了，并且没有更多的同步被需要时，semaphores和fence需要被销毁
 		for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHTS; i++)
 		{
@@ -187,24 +197,7 @@ private:
 
 		//销毁command pool
 		vkDestroyCommandPool(device, commandPool, nullptr);
-		//销毁framebuffers，需要在renderpass、imageviews销毁前、一帧绘制完后销毁
-		for (auto framebuffer : swapChainFramebuffers)
-		{
-			vkDestroyFramebuffer(device, framebuffer, nullptr);
-		}
-		//销毁pipeline
-		vkDestroyPipeline(device, graphicsPipeline, nullptr);
-		//销毁pipeline layout
-		vkDestroyPipelineLayout(device, pipelineLayout, nullptr);
-		//销毁render pass
-		vkDestroyRenderPass(device, renderPass, nullptr);
-		//销毁swap chain对应的image views，image view是我们手动创建的，因此也要手动销毁
-		for (auto imageView : swapChainImageViews)
-		{
-			vkDestroyImageView(device, imageView, nullptr);
-		}
-		//销毁Swap chain
-		vkDestroySwapchainKHR(device, swapChain, nullptr);
+		
 		//销毁VkDevice
 		vkDestroyDevice(device, nullptr);
 		//销毁DebugUtilsMessenger
@@ -1193,7 +1186,19 @@ private:
 		vkResetFences(device, 1, &inFlightFences[currentFrame]);
 		//从swap chain中获取一张image
 		uint32_t imageIndex;
-		vkAcquireNextImageKHR(device, swapChain, UINT64_MAX, imageAvailableSemaphores[currentFrame], VK_NULL_HANDLE, &imageIndex);
+		VkResult result = vkAcquireNextImageKHR(device, swapChain, UINT64_MAX, imageAvailableSemaphores[currentFrame], VK_NULL_HANDLE, &imageIndex);
+		//swap chain过时的话重建
+		if (result == VK_ERROR_OUT_OF_DATE_KHR)
+		{
+			//swap chain已经不再和surface兼容，并且不能再用于渲染。通常发生在window resize。
+			recreateSwapChain();
+			return;
+		}
+		else if (result != VK_SUCCESS && result != VK_SUBOPTIMAL_KHR)
+		{
+			throw std::runtime_error("failed to acquire swap chain image!");
+		}
+		
 		//重置command buffer，确保其可以被录制
 		vkResetCommandBuffer(commandBuffers[currentFrame], 0);
 		//录制指令
@@ -1234,7 +1239,16 @@ private:
 		//指定一个VkResult数组，来检查每个swap chain的presentation是否成功
 		presentInfo.pResults = nullptr; // Optional
 		//向swap chain提交一个present an image的请求
-		vkQueuePresentKHR(presentQueue, &presentInfo);
+		result = vkQueuePresentKHR(presentQueue, &presentInfo);
+
+		if (result == VK_ERROR_OUT_OF_DATE_KHR || result == VK_SUBOPTIMAL_KHR)
+		{
+			recreateSwapChain();
+		}
+		else if (result != VK_SUCCESS)
+		{
+			throw std::runtime_error("failed to present swap chain image!");
+		}
 
 		//递进到下一帧
 		currentFrame = (currentFrame + 1) % MAX_FRAMES_IN_FLIGHTS;
@@ -1265,6 +1279,37 @@ private:
 				throw std::runtime_error("failed to create semaphores!");
 			}
 		}
+	}
+#pragma endregion
+
+#pragma region Swap chain recreation
+	//重建swap chain前清理旧资源
+	void cleanupSwapChain()
+	{
+		//销毁framebuffers，需要在renderpass、imageviews销毁前、一帧绘制完后销毁
+		for (auto framebuffer : swapChainFramebuffers)
+		{
+			vkDestroyFramebuffer(device, framebuffer, nullptr);
+		}
+		//销毁swap chain对应的image views，image view是我们手动创建的，因此也要手动销毁
+		for (auto imageView : swapChainImageViews)
+		{
+			vkDestroyImageView(device, imageView, nullptr);
+		}
+		//销毁Swap chain
+		vkDestroySwapchainKHR(device, swapChain, nullptr);
+	}
+
+	//当window surface和swap chain不再兼容时重建swap chain
+	void recreateSwapChain()
+	{
+		vkDeviceWaitIdle(device);
+
+		cleanupSwapChain();
+
+		createSwapChain();
+		createImageViews();
+		createFramebuffers();
 	}
 #pragma endregion
 };
