@@ -118,6 +118,8 @@ private:
 	std::vector<VkFence> inFlightFences;
 	//当前帧索引
 	uint32_t currentFrame = 0;
+	//标识一个window resize发生的flag
+	bool framebufferResized = false;
 
 	//所有要启用的device extensions
 	const std::vector<const char*> deviceExtensions = {
@@ -133,11 +135,15 @@ private:
 		//由于GLFW最开始是被用于创建OpenGL context的，所以我们需要告诉它不要创建一个OpenGL context
 		glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
 		//disable resize功能
-		glfwWindowHint(GLFW_RESIZABLE, GLFW_FALSE);
+		//glfwWindowHint(GLFW_RESIZABLE, GLFW_FALSE);
 
 		//创建真正的window
 		//前三个参数确定了window的宽、高和标题。第四个参数允许我们选择指定打开window的监视器，最后一个参数仅与OpenGL相关。
 		window = glfwCreateWindow(WIDTH, HEIGHT, "Vulkan", nullptr, nullptr);
+		//将helloTriangleApplication的this指针存储到window中
+		glfwSetWindowUserPointer(window, this);
+		//注册resize回调
+		glfwSetFramebufferSizeCallback(window, framebufferResizeCallback);
 	}
 
 	//**initVulkan**函数来用于实例化Vulkan objects私有成员
@@ -1182,8 +1188,7 @@ private:
 	{
 		//等待上一帧完成
 		vkWaitForFences(device, 1, &inFlightFences[currentFrame], VK_TRUE, UINT64_MAX);
-		//重置fence
-		vkResetFences(device, 1, &inFlightFences[currentFrame]);
+		
 		//从swap chain中获取一张image
 		uint32_t imageIndex;
 		VkResult result = vkAcquireNextImageKHR(device, swapChain, UINT64_MAX, imageAvailableSemaphores[currentFrame], VK_NULL_HANDLE, &imageIndex);
@@ -1198,6 +1203,9 @@ private:
 		{
 			throw std::runtime_error("failed to acquire swap chain image!");
 		}
+
+		//在确保我们会执行submit之后再重置fence到unsignaled
+		vkResetFences(device, 1, &inFlightFences[currentFrame]);
 		
 		//重置command buffer，确保其可以被录制
 		vkResetCommandBuffer(commandBuffers[currentFrame], 0);
@@ -1241,8 +1249,9 @@ private:
 		//向swap chain提交一个present an image的请求
 		result = vkQueuePresentKHR(presentQueue, &presentInfo);
 
-		if (result == VK_ERROR_OUT_OF_DATE_KHR || result == VK_SUBOPTIMAL_KHR)
+		if (result == VK_ERROR_OUT_OF_DATE_KHR || result == VK_SUBOPTIMAL_KHR || framebufferResized)
 		{
+			framebufferResized = false;
 			recreateSwapChain();
 		}
 		else if (result != VK_SUCCESS)
@@ -1303,6 +1312,15 @@ private:
 	//当window surface和swap chain不再兼容时重建swap chain
 	void recreateSwapChain()
 	{
+		//当窗口最小化时暂停运行
+		int width = 0, height = 0;
+		glfwGetFramebufferSize(window, &width, &height);
+		while (width == 0 || height == 0)
+		{
+			glfwGetFramebufferSize(window, &width, &height);
+			glfwWaitEvents();
+		}
+
 		vkDeviceWaitIdle(device);
 
 		cleanupSwapChain();
@@ -1310,6 +1328,13 @@ private:
 		createSwapChain();
 		createImageViews();
 		createFramebuffers();
+	}
+
+	static void framebufferResizeCallback(GLFWwindow* window, int wdth, int height)
+	{
+		//设置flag为true，发生resize
+		auto app = reinterpret_cast<HelloTriangleApplication*>(glfwGetWindowUserPointer(window));
+		app->framebufferResized = true;
 	}
 #pragma endregion
 };
