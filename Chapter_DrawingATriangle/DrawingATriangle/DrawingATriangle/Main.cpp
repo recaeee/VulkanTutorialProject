@@ -19,6 +19,9 @@
 #include <algorithm> // Necessary for std::clamp
 
 #include <fstream>
+//数学库，包含vector和matrix等，用于声明顶点数据
+#include <glm/glm.hpp>
+#include <array>
 
 //使用常量而不是硬编码的width和height，因为我们会多次引用这些值
 const uint32_t WIDTH = 800;
@@ -1336,6 +1339,37 @@ private:
 		auto app = reinterpret_cast<HelloTriangleApplication*>(glfwGetWindowUserPointer(window));
 		app->framebufferResized = true;
 	}
+#pragma endregion
+
+#pragma region Vertex buffers
+	//顶点着色器输入
+	struct Vertex {
+		glm::vec2 pos;
+		glm::vec3 color;
+
+		static VkVertexInputBindingDescription getBindingDescription()
+		{
+			//顶点绑定Vertex binding描述了在整个顶点中从内存加载数据的速率。它指定了data entries之间的字节数以及是否在每个顶点后或每个实例之后移动到下一个data entry
+			VkVertexInputBindingDescription bindingDescription{};
+			bindingDescription.binding = 0;
+			bindingDescription.stride = sizeof(Vertex);
+			bindingDescription.inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
+			return bindingDescription;
+		}
+
+		static std::array<VkVertexInputAttributeDescription, 2> getAttributeDescriptions()
+		{
+			std::array<VkVertexInputAttributeDescription, 2> attributeDescriptions{};
+
+			return attributeDescriptions;
+		}
+	};
+
+	const std::vector<Vertex> vertices = {
+		{{0.0f, -0.5f}, {1.0f, 0.0f, 0.0f}},
+		{{0.5f, 0.5f}, {0.0f, 1.0f, 0.0f}},
+		{{-0.5f, 0.5f}, {0.0f, 0.0f, 1.0f}}
+	};
 #pragma endregion
 };
 

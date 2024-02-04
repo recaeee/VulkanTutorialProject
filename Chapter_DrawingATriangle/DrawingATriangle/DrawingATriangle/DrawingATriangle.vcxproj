@@ -76,10 +76,14 @@
       <SDLCheck>true</SDLCheck>
       <PreprocessorDefinitions>WIN32;_DEBUG;_CONSOLE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>
+      <AdditionalIncludeDirectories>D:\Canopus\VulkanSDK\VulkanSDK\Include;D:\Canopus\VulkanTutorialProject\Environment\Libraries\glm-0.9.9.8;D:\Canopus\VulkanTutorialProject\Environment\Libraries\glfw-3.3.8.bin.WIN64\include;</AdditionalIncludeDirectories>
+      <LanguageStandard>stdcpp17</LanguageStandard>
     </ClCompile>
     <Link>
       <SubSystem>Console</SubSystem>
       <GenerateDebugInformation>true</GenerateDebugInformation>
+      <AdditionalLibraryDirectories>D:\Canopus\VulkanSDK\VulkanSDK\Lib;D:\Canopus\VulkanTutorialProject\Environment\Libraries\glfw-3.3.8.bin.WIN64\lib-vc2022;</AdditionalLibraryDirectories>
+      <AdditionalDependencies>vulkan-1.lib;glfw3.lib;$(CoreLibraryDependencies);%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">
@@ -90,12 +94,16 @@
       <SDLCheck>true</SDLCheck>
       <PreprocessorDefinitions>WIN32;NDEBUG;_CONSOLE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>
+      <AdditionalIncludeDirectories>D:\Canopus\VulkanSDK\VulkanSDK\Include;D:\Canopus\VulkanTutorialProject\Environment\Libraries\glm-0.9.9.8;D:\Canopus\VulkanTutorialProject\Environment\Libraries\glfw-3.3.8.bin.WIN64\include;</AdditionalIncludeDirectories>
+      <LanguageStandard>stdcpp17</LanguageStandard>
     </ClCompile>
     <Link>
       <SubSystem>Console</SubSystem>
       <EnableCOMDATFolding>true</EnableCOMDATFolding>
       <OptimizeReferences>true</OptimizeReferences>
       <GenerateDebugInformation>true</GenerateDebugInformation>
+      <AdditionalLibraryDirectories>D:\Canopus\VulkanSDK\VulkanSDK\Lib;D:\Canopus\VulkanTutorialProject\Environment\Libraries\glfw-3.3.8.bin.WIN64\lib-vc2022;</AdditionalLibraryDirectories>
+      <AdditionalDependencies>vulkan-1.lib;glfw3.lib;$(CoreLibraryDependencies);%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
@@ -104,14 +112,14 @@
       <SDLCheck>true</SDLCheck>
       <PreprocessorDefinitions>_DEBUG;_CONSOLE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>
-      <AdditionalIncludeDirectories>D:\Canopus\GithubProjs\VulkanTutorialProject\Environment\Libraries\glfw-3.3.8.bin.WIN64\include;D:\Canopus\GithubProjs\VulkanTutorialProject\Environment\Libraries\glm-0.9.9.8\glm;D:\Canopus\GithubProjs\VulkanTutorialProject\Environment\VulkanSDK\VulkanSDK\Include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>D:\Canopus\VulkanSDK\VulkanSDK\Include;D:\Canopus\VulkanTutorialProject\Environment\Libraries\glm-0.9.9.8;D:\Canopus\VulkanTutorialProject\Environment\Libraries\glfw-3.3.8.bin.WIN64\include;D:\Canopus\GithubProjs\VulkanTutorialProject\Environment\Libraries\glfw-3.3.8.bin.WIN64\include;D:\Canopus\GithubProjs\VulkanTutorialProject\Environment\Libraries\glm-0.9.9.8\glm;D:\Canopus\GithubProjs\VulkanTutorialProject\Environment\VulkanSDK\VulkanSDK\Include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <LanguageStandard>stdcpp17</LanguageStandard>
     </ClCompile>
     <Link>
       <SubSystem>Console</SubSystem>
       <GenerateDebugInformation>true</GenerateDebugInformation>
-      <AdditionalLibraryDirectories>D:\Canopus\GithubProjs\VulkanTutorialProject\Environment\Libraries\glfw-3.3.8.bin.WIN64\lib-vc2022;D:\Canopus\GithubProjs\VulkanTutorialProject\Environment\VulkanSDK\VulkanSDK\Lib;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
-      <AdditionalDependencies>vulkan-1.lib;glfw3.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalLibraryDirectories>D:\Canopus\VulkanSDK\VulkanSDK\Lib;D:\Canopus\VulkanTutorialProject\Environment\Libraries\glfw-3.3.8.bin.WIN64\lib-vc2022;D:\Canopus\GithubProjs\VulkanTutorialProject\Environment\Libraries\glfw-3.3.8.bin.WIN64\lib-vc2022;D:\Canopus\GithubProjs\VulkanTutorialProject\Environment\VulkanSDK\VulkanSDK\Lib;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
+      <AdditionalDependencies>vulkan-1.lib;glfw3.lib;vulkan-1.lib;glfw3.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
@@ -122,7 +130,7 @@
       <SDLCheck>true</SDLCheck>
       <PreprocessorDefinitions>NDEBUG;_CONSOLE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>
-      <AdditionalIncludeDirectories>D:\Canopus\GithubProjs\VulkanTutorialProject\Environment\Libraries\glfw-3.3.8.bin.WIN64\include;D:\Canopus\GithubProjs\VulkanTutorialProject\Environment\Libraries\glm-0.9.9.8\glm;D:\Canopus\GithubProjs\VulkanTutorialProject\Environment\VulkanSDK\VulkanSDK\Include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>D:\Canopus\VulkanSDK\VulkanSDK\Include;D:\Canopus\VulkanTutorialProject\Environment\Libraries\glm-0.9.9.8;D:\Canopus\VulkanTutorialProject\Environment\Libraries\glfw-3.3.8.bin.WIN64\include;D:\Canopus\GithubProjs\VulkanTutorialProject\Environment\Libraries\glfw-3.3.8.bin.WIN64\include;D:\Canopus\GithubProjs\VulkanTutorialProject\Environment\Libraries\glm-0.9.9.8\glm;D:\Canopus\GithubProjs\VulkanTutorialProject\Environment\VulkanSDK\VulkanSDK\Include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <LanguageStandard>stdcpp17</LanguageStandard>
     </ClCompile>
     <Link>
@@ -130,8 +138,8 @@
       <EnableCOMDATFolding>true</EnableCOMDATFolding>
       <OptimizeReferences>true</OptimizeReferences>
       <GenerateDebugInformation>true</GenerateDebugInformation>
-      <AdditionalLibraryDirectories>D:\Canopus\GithubProjs\VulkanTutorialProject\Environment\Libraries\glfw-3.3.8.bin.WIN64\lib-vc2022;D:\Canopus\GithubProjs\VulkanTutorialProject\Environment\VulkanSDK\VulkanSDK\Lib;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
-      <AdditionalDependencies>vulkan-1.lib;glfw3.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalLibraryDirectories>D:\Canopus\VulkanSDK\VulkanSDK\Lib;D:\Canopus\VulkanTutorialProject\Environment\Libraries\glfw-3.3.8.bin.WIN64\lib-vc2022;D:\Canopus\GithubProjs\VulkanTutorialProject\Environment\Libraries\glfw-3.3.8.bin.WIN64\lib-vc2022;D:\Canopus\GithubProjs\VulkanTutorialProject\Environment\VulkanSDK\VulkanSDK\Lib;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
+      <AdditionalDependencies>vulkan-1.lib;glfw3.lib;vulkan-1.lib;glfw3.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
