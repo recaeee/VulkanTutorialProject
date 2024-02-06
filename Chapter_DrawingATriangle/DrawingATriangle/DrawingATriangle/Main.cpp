@@ -123,6 +123,10 @@ private:
 	uint32_t currentFrame = 0;
 	//标识一个window resize发生的flag
 	bool framebufferResized = false;
+	//Vertex buffer
+	VkBuffer vertexBuffer;
+	//实际分配的vertex buffer的显存
+	VkDeviceMemory vertexBufferMemory;
 
 	//所有要启用的device extensions
 	const std::vector<const char*> deviceExtensions = {
@@ -149,7 +153,7 @@ private:
 		glfwSetFramebufferSizeCallback(window, framebufferResizeCallback);
 	}
 
-	//**initVulkan**函数来用于实例化Vulkan objects私有成员
+	//initVulkan函数来用于实例化Vulkan objects私有成员
 	void initVulkan()
 	{
 		createInstance();
@@ -163,6 +167,7 @@ private:
 		createGraphicsPipeline();
 		createFramebuffers();
 		createCommandPool();
+		createVertexBuffer();
 		createCommandBuffers();
 		createSyncObjects();
 	}
@@ -187,6 +192,11 @@ private:
 	void cleanup()
 	{
 		cleanupSwapChain();
+
+		//销毁vertex buffer
+		vkDestroyBuffer(device, vertexBuffer, nullptr);
+		//销毁与vertex buffer绑定的内存
+		vkFreeMemory(device, vertexBufferMemory, nullptr);
 
 		//销毁pipeline
 		vkDestroyPipeline(device, graphicsPipeline, nullptr);
@@ -845,10 +855,14 @@ private:
 		//顶点输入
 		VkPipelineVertexInputStateCreateInfo vertexInputInfo{};
 		vertexInputInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
-		vertexInputInfo.vertexBindingDescriptionCount = 0;
-		vertexInputInfo.pVertexBindingDescriptions = nullptr;
-		vertexInputInfo.vertexAttributeDescriptionCount = 0;
-		vertexInputInfo.pVertexAttributeDescriptions = nullptr;
+
+		auto bindingDescription = Vertex::getBindingDescription();
+		auto attributeDescriptions = Vertex::getAttributeDescriptions();
+
+		vertexInputInfo.vertexBindingDescriptionCount = 1;
+		vertexInputInfo.vertexAttributeDescriptionCount = static_cast<uint32_t>(attributeDescriptions.size());
+		vertexInputInfo.pVertexBindingDescriptions = &bindingDescription;
+		vertexInputInfo.pVertexAttributeDescriptions = attributeDescriptions.data();
 
 		//图元装配模式
 		VkPipelineInputAssemblyStateCreateInfo inputAssembly{};
@@ -1162,6 +1176,7 @@ private:
 
 		//绑定graphics pipeline
 		vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, graphicsPipeline);
+
 		//配置dynamic states
 		VkViewport viewport{};
 		viewport.x = 0.0f;
@@ -1176,8 +1191,13 @@ private:
 		scissor.offset = { 0, 0 };
 		scissor.extent = swapChainExtent;
 		vkCmdSetScissor(commandBuffer, 0, 1, &scissor);
+
+		//绑定vertex buffer
+		VkBuffer vertexBuffers[] = { vertexBuffer };
+		VkDeviceSize offsets[] = { 0 };
+		vkCmdBindVertexBuffers(commandBuffer, 0, 1, vertexBuffers, offsets);
 		//绘制指令
-		vkCmdDraw(commandBuffer, 3, 1, 0, 0);
+		vkCmdDraw(commandBuffer, static_cast<uint32_t>(vertices.size()), 1, 0, 0);
 		//结束render pass
 		vkCmdEndRenderPass(commandBuffer);
 		//结束command buffer录制
@@ -1359,8 +1379,18 @@ private:
 
 		static std::array<VkVertexInputAttributeDescription, 2> getAttributeDescriptions()
 		{
+			//属性描述Attribute description结构体描述了如何从源自绑定描述Binding descrription的顶点数据块中提取顶点属性
 			std::array<VkVertexInputAttributeDescription, 2> attributeDescriptions{};
 
+			attributeDescriptions[0].binding = 0;
+			attributeDescriptions[0].location = 0;
+			attributeDescriptions[0].format = VK_FORMAT_R32G32_SFLOAT;
+			attributeDescriptions[0].offset = offsetof(Vertex, pos);
+
+			attributeDescriptions[1].binding = 0;
+			attributeDescriptions[1].location = 1;
+			attributeDescriptions[1].format = VK_FORMAT_R32G32B32_SFLOAT;
+			attributeDescriptions[1].offset = offsetof(Vertex, color);
 			return attributeDescriptions;
 		}
 	};
@@ -1370,6 +1400,67 @@ private:
 		{{0.5f, 0.5f}, {0.0f, 1.0f, 0.0f}},
 		{{-0.5f, 0.5f}, {0.0f, 0.0f, 1.0f}}
 	};
+
+	void createVertexBuffer()
+	{
+		VkBufferCreateInfo bufferInfo{};
+		bufferInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+		bufferInfo.size = sizeof(vertices[0]) * vertices.size();//size指定了buffer以字节为单位的大小
+		bufferInfo.usage = VK_BUFFER_USAGE_VERTEX_BUFFER_BIT;//usage表明了buffer中的数据的用途，可以使用按位或运算来指定多个用途
+		bufferInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;//buffer也可以被一个指定的queue family占用，或者同时被多个queue family共享
+
+		if (vkCreateBuffer(device, &bufferInfo, nullptr, &vertexBuffer) != VK_SUCCESS)
+		{
+			throw std::runtime_error("failed to create vertex buffer!");
+		}
+
+		//buffer已经被创建了，但实际上并未其分配任何内存
+		//使用恰当命名的vkGetBufferMemoryRequirements函数查询其内存需求
+		VkMemoryRequirements memRequirements;
+		vkGetBufferMemoryRequirements(device, vertexBuffer, &memRequirements);
+
+		//实际分配显存
+		VkMemoryAllocateInfo allocInfo{};
+		allocInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+		allocInfo.allocationSize = memRequirements.size;
+		allocInfo.memoryTypeIndex = findMemoryType(memRequirements.memoryTypeBits, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+
+		if (vkAllocateMemory(device, &allocInfo, nullptr, &vertexBufferMemory) != VK_SUCCESS)
+		{
+			throw std::runtime_error("failed to allocate vertex buffer memory!");
+		}
+
+		//使用vkBindBufferMemory将此内存与buffer关联起来
+		vkBindBufferMemory(device, vertexBuffer, vertexBufferMemory, 0);
+
+		//将顶点数据拷贝到buffer中
+		//首先将显存映射到CPU可以访问的内存中
+		void* data;
+		vkMapMemory(device, vertexBufferMemory, 0, bufferInfo.size, 0, &data);
+		//将内存中的顶点数据拷贝到显存
+		memcpy(data, vertices.data(), (size_t)bufferInfo.size);
+		//解除映射
+		vkUnmapMemory(device, vertexBufferMemory);
+	}
+
+	//为要分配的buffer找到正确的合适的显存类型
+	uint32_t findMemoryType(uint32_t typeFilter, VkMemoryPropertyFlags properties)
+	{
+		//查询所有可用的内存类型
+		VkPhysicalDeviceMemoryProperties memProperties;
+		vkGetPhysicalDeviceMemoryProperties(physicalDevice, &memProperties);
+
+		//找到buffer适合的内存类型
+		for (uint32_t i = 0; i < memProperties.memoryTypeCount; i++)
+		{
+			if (typeFilter & (1 << i) && (memProperties.memoryTypes[i].propertyFlags & properties) == properties)
+			{
+				return i;
+			}
+		}
+
+		throw std::runtime_error("failed to find suitable memory type!");
+	}
 #pragma endregion
 };
 
