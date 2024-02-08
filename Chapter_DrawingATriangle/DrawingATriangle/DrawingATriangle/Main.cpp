@@ -19,8 +19,13 @@
 #include <algorithm> // Necessary for std::clamp
 
 #include <fstream>
-//数学库，包含vector和matrix等，用于声明顶点数据
+//数学库，包含vector和matrix等，用于声明顶点数据、3D MVP变换等
+#define GLM_FORCE_RADIANS
 #include <glm/glm.hpp>
+#include <glm/gtc/matrix_transform.hpp>
+
+#include <chrono>
+
 #include <array>
 
 //使用常量而不是硬编码的width和height，因为我们会多次引用这些值
@@ -103,6 +108,8 @@ private:
 	std::vector<VkImageView> swapChainImageViews;
 	//存储render pass
 	VkRenderPass renderPass;
+	//存储descriptor set layout
+	VkDescriptorSetLayout descriptorSetLayout;
 	//存储pipeline layout，用来指定创建管线时的uniform值
 	VkPipelineLayout pipelineLayout;
 	//存储pipeline
@@ -131,6 +138,10 @@ private:
 	VkBuffer indexBuffer;
 	//实际分配的index buffer的内存
 	VkDeviceMemory indexBufferMemory;
+	//uniform buffers，数量和同时运行的frame数量一致
+	std::vector<VkBuffer> uniformBuffers;
+	std::vector<VkDeviceMemory> uniformBuffersMemory;
+	std::vector<void*> uniformBuffersMapped;
 
 	//所有要启用的device extensions
 	const std::vector<const char*> deviceExtensions = {
@@ -168,11 +179,13 @@ private:
 		createSwapChain();
 		createImageViews();
 		createRenderPass();
+		createDescriptorSetLayout();
 		createGraphicsPipeline();
 		createFramebuffers();
 		createCommandPool();
 		createVertexBuffer();
 		createIndexBuffer();
+		createUniformBuffers();
 		createCommandBuffers();
 		createSyncObjects();
 	}
@@ -197,6 +210,15 @@ private:
 	void cleanup()
 	{
 		cleanupSwapChain();
+		//销毁Uniform buffer和对应Memory
+		for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHTS; i++)
+		{
+			vkDestroyBuffer(device, uniformBuffers[i], nullptr);
+			vkFreeMemory(device, uniformBuffersMemory[i], nullptr);
+		}
+
+		//销毁descriptor set layout
+		vkDestroyDescriptorSetLayout(device, descriptorSetLayout, nullptr);
 
 		//销毁index buffer
 		vkDestroyBuffer(device, indexBuffer, nullptr);
@@ -960,8 +982,8 @@ private:
 		//创建pipeline layout，指定shader uniform值
 		VkPipelineLayoutCreateInfo pipelineLayoutInfo{};
 		pipelineLayoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
-		pipelineLayoutInfo.setLayoutCount = 0; // Optional
-		pipelineLayoutInfo.pSetLayouts = nullptr; // Optional
+		pipelineLayoutInfo.setLayoutCount = 1; // Optional
+		pipelineLayoutInfo.pSetLayouts = &descriptorSetLayout; // Optional
 		pipelineLayoutInfo.pushConstantRangeCount = 0; // Optional
 		pipelineLayoutInfo.pPushConstantRanges = nullptr; // Optinal
 
@@ -1242,11 +1264,16 @@ private:
 
 		//在确保我们会执行submit之后再重置fence到unsignaled
 		vkResetFences(device, 1, &inFlightFences[currentFrame]);
+
+		//更新uniform数据
+		updateUniformBuffer(currentFrame);
 		
 		//重置command buffer，确保其可以被录制
 		vkResetCommandBuffer(commandBuffers[currentFrame], 0);
 		//录制指令
 		recordCommandBuffer(commandBuffers[currentFrame], imageIndex);
+
+
 		//提交command buffer到queue中，并且配置同步
 		VkSubmitInfo submitInfo{};
 		submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
@@ -1574,8 +1601,74 @@ private:
 		vkDestroyBuffer(device, stagingBuffer, nullptr);
 		vkFreeMemory(device, stagingBufferMemory, nullptr);
 	}
+#pragma endregion
 
+#pragma region Uniform buffers
+	struct UniformBufferObject {
+		glm::mat4 model;
+		glm::mat4 view;
+		glm::mat4 proj;
+	};
 
+	void createDescriptorSetLayout()
+	{
+		//创建所有bindings
+		VkDescriptorSetLayoutBinding uboLayoutBinding{};
+		uboLayoutBinding.binding = 0;
+		uboLayoutBinding.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+		uboLayoutBinding.descriptorCount = 1;
+
+		uboLayoutBinding.stageFlags = VK_SHADER_STAGE_VERTEX_BIT;//指定在哪个shader阶段该discriptor会被引用
+		uboLayoutBinding.pImmutableSamplers = nullptr;// Optional
+
+		//创建descriptor set layout
+		VkDescriptorSetLayoutCreateInfo layoutInfo{};
+		layoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+		layoutInfo.bindingCount = 1;
+		layoutInfo.pBindings = &uboLayoutBinding;
+
+		if (vkCreateDescriptorSetLayout(device, &layoutInfo, nullptr, &descriptorSetLayout) != VK_SUCCESS)
+		{
+			throw std::runtime_error("failed to create descriptor set layout!");
+		}
+	}
+
+	void createUniformBuffers()
+	{
+		VkDeviceSize bufferSize = sizeof(UniformBufferObject);
+
+		uniformBuffers.resize(MAX_FRAMES_IN_FLIGHTS);
+		uniformBuffersMemory.resize(MAX_FRAMES_IN_FLIGHTS);
+		uniformBuffersMapped.resize(MAX_FRAMES_IN_FLIGHTS);
+
+		for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHTS; i++)
+		{
+			createBuffer(bufferSize, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, uniformBuffers[i], uniformBuffersMemory[i]);
+
+			vkMapMemory(device, uniformBuffersMemory[i], 0, bufferSize, 0, &uniformBuffersMapped[i]);
+		}
+	}
+
+	void updateUniformBuffer(uint32_t currentImage)
+	{
+		static auto startTime = std::chrono::high_resolution_clock::now();
+
+		auto currentTime = std::chrono::high_resolution_clock::now();
+		float time = std::chrono::duration<float, std::chrono::seconds::period>(currentTime - startTime).count();
+
+		//在uniform buffer object中定义MVP变换
+		UniformBufferObject ubo{};
+		ubo.model = glm::rotate(glm::mat4(1.0f), time * glm::radians(90.0f), glm::vec3(0.0f, 0.0f, 1.0f));
+
+		ubo.view = glm::lookAt(glm::vec3(2.0f, 2.0f, 2.0f), glm::vec3(0.0f, 0.0f, 0.0f), glm::vec3(0.0f, 0.0f, 1.0f));
+
+		ubo.proj = glm::perspective(glm::radians(45.0f), swapChainExtent.width / (float)swapChainExtent.height, 0.1f, 1.0f);
+
+		ubo.proj[1][1] *= -1;
+
+		//将数据拷贝到uniform buffer中
+		memcpy(uniformBuffersMapped[currentImage], &ubo, sizeof(ubo));
+	}
 #pragma endregion
 };
 
