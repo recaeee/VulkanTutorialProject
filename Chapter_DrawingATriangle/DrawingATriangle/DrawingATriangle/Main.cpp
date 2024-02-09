@@ -949,7 +949,7 @@ private:
 		rasterizer.polygonMode = VK_POLYGON_MODE_FILL; // 决定根据几何图形如何生成片元，可以是FILL、LINE、POINT，后两者需要GPU feature
 		rasterizer.lineWidth = 1.0f; //超过1.0时，需要启用wideLines GPU feature
 		rasterizer.cullMode = VK_CULL_MODE_BACK_BIT; //面剔除类型
-		rasterizer.frontFace = VK_FRONT_FACE_CLOCKWISE; //确定正面方向
+		rasterizer.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE; //确定正面方向
 		rasterizer.depthBiasEnable = VK_FALSE; // 可以设置深度偏移
 		rasterizer.depthBiasConstantFactor = 0.0f; // Optional
 		rasterizer.depthBiasClamp = 0.0f; // Optional
@@ -1238,6 +1238,8 @@ private:
 		vkCmdBindVertexBuffers(commandBuffer, 0, 1, vertexBuffers, offsets);
 		//绑定index buffer
 		vkCmdBindIndexBuffer(commandBuffer, indexBuffer, 0, VK_INDEX_TYPE_UINT16);
+		//为每一帧的正确的descriptor set实际绑定到着色器中的descriptor，好绕，实际就是为每一帧绑定正确的descriptor set
+		vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout, 0, 1, &descriptorSets[currentFrame], 0, nullptr);
 
 		//绘制指令，使用index buffer
 		vkCmdDrawIndexed(commandBuffer, static_cast<uint32_t>(indices.size()), 1, 0, 0, 0);
@@ -1714,7 +1716,26 @@ private:
 
 		for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHTS; i++)
 		{
+			//为每个descriptor set配置其中的descriptor，每个descriptor引用一个uniform buffer
+			VkDescriptorBufferInfo bufferInfo{};
+			bufferInfo.buffer = uniformBuffers[i];
+			bufferInfo.offset = 0;
+			bufferInfo.range = sizeof(UniformBufferObject);
+			//更新descriptor set
+			VkWriteDescriptorSet descriptorWrite{};
+			descriptorWrite.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+			descriptorWrite.dstSet = descriptorSets[i];
+			descriptorWrite.dstBinding = 0;
+			descriptorWrite.dstArrayElement = 0;
 
+			descriptorWrite.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+			descriptorWrite.descriptorCount = 1;
+
+			descriptorWrite.pBufferInfo = &bufferInfo;
+			descriptorWrite.pImageInfo = nullptr; // Optional
+			descriptorWrite.pTexelBufferView = nullptr; // Optional
+
+			vkUpdateDescriptorSets(device, 1, &descriptorWrite, 0, nullptr);
 		}
 	}
 #pragma endregion
