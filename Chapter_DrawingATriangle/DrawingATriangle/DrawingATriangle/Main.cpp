@@ -21,6 +21,8 @@
 #include <fstream>
 //数学库，包含vector和matrix等，用于声明顶点数据、3D MVP变换等
 #define GLM_FORCE_RADIANS
+//使GLM的类型满足内存对齐
+#define GLM_FORCE_DEFAULT_ALIGNED_GENTYPES
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 
@@ -1672,7 +1674,7 @@ private:
 
 		ubo.view = glm::lookAt(glm::vec3(2.0f, 2.0f, 2.0f), glm::vec3(0.0f, 0.0f, 0.0f), glm::vec3(0.0f, 0.0f, 1.0f));
 
-		ubo.proj = glm::perspective(glm::radians(45.0f), swapChainExtent.width / (float)swapChainExtent.height, 0.1f, 1.0f);
+		ubo.proj = glm::perspective(glm::radians(45.0f), swapChainExtent.width / (float)swapChainExtent.height, 0.1f, 10.0f);
 
 		ubo.proj[1][1] *= -1;
 
