@@ -30,6 +30,10 @@
 
 #include <array>
 
+//图像加载库
+#define STB_IMAGE_IMPLEMENTATION
+#include <stb_image.h>
+
 //使用常量而不是硬编码的width和height，因为我们会多次引用这些值
 const uint32_t WIDTH = 800;
 const uint32_t HEIGHT = 600;
@@ -148,6 +152,9 @@ private:
 	VkDescriptorPool descriptorPool;
 	//每个运行帧的descriptor set
 	std::vector<VkDescriptorSet> descriptorSets;
+	//存储纹理image及其对应device memory
+	VkImage textureImage;
+	VkDeviceMemory textureImageMemory;
 
 	//所有要启用的device extensions
 	const std::vector<const char*> deviceExtensions = {
@@ -189,6 +196,7 @@ private:
 		createGraphicsPipeline();
 		createFramebuffers();
 		createCommandPool();
+		createTextureImage();
 		createVertexBuffer();
 		createIndexBuffer();
 		createUniformBuffers();
@@ -1739,6 +1747,50 @@ private:
 
 			vkUpdateDescriptorSets(device, 1, &descriptorWrite, 0, nullptr);
 		}
+	}
+#pragma endregion
+
+#pragma region Texture mapping
+	void createTextureImage()
+	{
+		//加载图像文件
+		int texWidth, texHeight, texChannels;
+		stbi_uc* pixels = stbi_load("textures/texture.png", &texWidth, &texHeight, &texChannels, STBI_rgb_alpha);
+		VkDeviceSize  imageSize = texWidth * texHeight * 4;
+
+		if (!pixels)
+		{
+			throw std::runtime_error("failed to load texture image!");
+		}
+
+		//创建staging buffer即对应的host visible memory
+		VkBuffer stagingBuffer;
+		VkDeviceMemory stagingBufferMemory;
+		createBuffer(imageSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, stagingBuffer, stagingBufferMemory);
+		
+		//将加载的图像文件像素数据拷贝到staging buffer
+		void* data;
+		vkMapMemory(device, stagingBufferMemory, 0, imageSize, 0, &data);
+		memcpy(data, pixels, static_cast<size_t>(imageSize));
+		vkUnmapMemory(device, stagingBufferMemory);
+
+		//销毁原始的像素数组
+		stbi_image_free(pixels);
+
+		//创建image
+		VkImageCreateInfo imageInfo{};
+		imageInfo.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
+		imageInfo.imageType = VK_IMAGE_TYPE_2D;
+		imageInfo.extent.width = static_cast<uint32_t>(texWidth);
+		imageInfo.extent.height = static_cast<uint32_t>(texHeight);
+		imageInfo.extent.depth = 1;
+		imageInfo.mipLevels = 1;
+		imageInfo.arrayLayers = 1;
+
+		imageInfo.format = VK_FORMAT_R8G8B8A8_SRGB;
+		imageInfo.tiling = VK_IMAGE_TILING_OPTIMAL;//texels按照实现定义的顺序进行排布，以实现最佳访问
+
+		imageInfo.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
 	}
 #pragma endregion
 };
