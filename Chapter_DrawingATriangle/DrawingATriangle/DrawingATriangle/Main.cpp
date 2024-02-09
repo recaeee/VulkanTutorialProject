@@ -144,6 +144,8 @@ private:
 	std::vector<void*> uniformBuffersMapped;
 	//存储descriptor pool，用于分配descriptor sets
 	VkDescriptorPool descriptorPool;
+	//每个运行帧的descriptor set
+	std::vector<VkDescriptorSet> descriptorSets;
 
 	//所有要启用的device extensions
 	const std::vector<const char*> deviceExtensions = {
@@ -220,6 +222,8 @@ private:
 			vkDestroyBuffer(device, uniformBuffers[i], nullptr);
 			vkFreeMemory(device, uniformBuffersMemory[i], nullptr);
 		}
+		//销毁descriptor pool
+		vkDestroyDescriptorPool(device, descriptorPool, nullptr);
 
 		//销毁descriptor set layout
 		vkDestroyDescriptorSetLayout(device, descriptorSetLayout, nullptr);
@@ -1701,6 +1705,17 @@ private:
 		allocInfo.descriptorPool = descriptorPool;
 		allocInfo.descriptorSetCount = static_cast<uint32_t>(MAX_FRAMES_IN_FLIGHTS);
 		allocInfo.pSetLayouts = layouts.data();
+		//为运行中的每一帧创建一个descriptor set
+		descriptorSets.resize(MAX_FRAMES_IN_FLIGHTS);
+		if (vkAllocateDescriptorSets(device, &allocInfo, descriptorSets.data()) != VK_SUCCESS)
+		{
+			throw std::runtime_error("failed to allocate descriptor sets!");
+		}
+
+		for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHTS; i++)
+		{
+
+		}
 	}
 #pragma endregion
 };
