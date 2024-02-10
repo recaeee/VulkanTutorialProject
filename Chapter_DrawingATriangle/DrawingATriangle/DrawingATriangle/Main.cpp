@@ -155,6 +155,8 @@ private:
 	//存储纹理image及其对应device memory
 	VkImage textureImage;
 	VkDeviceMemory textureImageMemory;
+	//Texture iamge对应的image view
+	VkImageView textureImageView;
 
 	//所有要启用的device extensions
 	const std::vector<const char*> deviceExtensions = {
@@ -197,6 +199,7 @@ private:
 		createFramebuffers();
 		createCommandPool();
 		createTextureImage();
+		createTextureImageView();
 		createVertexBuffer();
 		createIndexBuffer();
 		createUniformBuffers();
@@ -226,6 +229,11 @@ private:
 	void cleanup()
 	{
 		cleanupSwapChain();
+
+		//销毁texture image和对应memory
+		vkDestroyImage(device, textureImage, nullptr);
+		vkFreeMemory(device, textureImageMemory, nullptr);
+
 		//销毁Uniform buffer和对应Memory
 		for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHTS; i++)
 		{
@@ -1752,6 +1760,17 @@ private:
 		createImage(texWidth, texHeight, VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_TILING_OPTIMAL,
 			VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
 			textureImage, textureImageMemory);
+
+		//将texture image转换到VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL
+		transitionImageLayout(textureImage, VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+		//执行buffer到image的copy函数
+		copyBufferToImage(stagingBuffer, textureImage, static_cast<uint32_t>(texWidth), static_cast<uint32_t>(texHeight));
+		//在copy之后进行一次transition来准备让shader访问
+		transitionImageLayout(textureImage, VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+	
+		//清理staging buffer和对应memory
+		vkDestroyBuffer(device, stagingBuffer, nullptr);
+		vkFreeMemory(device, stagingBufferMemory, nullptr);
 	}
 
 	void createImage(uint32_t width, uint32_t height, VkFormat format, VkImageTiling tiling, VkImageUsageFlags usage, VkMemoryPropertyFlags properties, VkImage& image, VkDeviceMemory& imageMemory)
@@ -1852,17 +1871,77 @@ private:
 		barrier.subresourceRange.baseArrayLayer = 0;
 		barrier.subresourceRange.layerCount = 1;
 
-		barrier.srcAccessMask = 0; // TODO
-		barrier.dstAccessMask = 0; // TODO
+		VkPipelineStageFlags sourceStage;
+		VkPipelineStageFlags destinationStage;
+
+		if (oldLayout == VK_IMAGE_LAYOUT_UNDEFINED && newLayout == VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL)
+		{
+			barrier.srcAccessMask = 0;//write不需要等待任何事情
+			barrier.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;//transfer write必须发生在pipeline transfer stage
+
+			sourceStage = VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;//最早的可能的pipeline stage
+			destinationStage = VK_PIPELINE_STAGE_TRANSFER_BIT;
+		}
+		else if (oldLayout == VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL && newLayout == VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL)
+		{
+			barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+			barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;//image将在同一pipeline stage写入，随后由片元着色器读取
+
+			sourceStage = VK_PIPELINE_STAGE_TRANSFER_BIT;
+			destinationStage = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
+		}
+		else
+		{
+			throw std::invalid_argument("unsupported layout transition!");
+		}
 
 		vkCmdPipelineBarrier(commandBuffer, 
-			0/*TODO*/, 0/*TODO*/, 
+			sourceStage, destinationStage, 
 			0,
 			0, nullptr,
 			0, nullptr,
 			1, &barrier);
 
 		endSingleTimeCommands(commandBuffer);
+	}
+
+	void copyBufferToImage(VkBuffer buffer, VkImage image, uint32_t width, uint32_t height)
+	{
+		VkCommandBuffer commandBuffer = beginSingleTimeCommands();
+		//指定要拷贝的buffer范围和拷贝到的image范围
+		VkBufferImageCopy region{};
+		region.bufferOffset = 0;
+		region.bufferRowLength = 0;
+		region.bufferImageHeight = 0;
+
+		region.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+		region.imageSubresource.mipLevel = 0;
+		region.imageSubresource.baseArrayLayer = 0;
+		region.imageSubresource.layerCount = 1;
+
+		region.imageOffset = { 0, 0, 0 };
+		region.imageExtent = {
+			width,
+			height,
+			1
+		};
+
+		//拷贝buffer到image
+		vkCmdCopyBufferToImage(
+			commandBuffer,
+			buffer,
+			image,
+			VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+			1,
+			&region
+		);
+
+		endSingleTimeCommands(commandBuffer);
+	}
+
+	void createTextureImageView()
+	{
+
 	}
 #pragma endregion
 };
