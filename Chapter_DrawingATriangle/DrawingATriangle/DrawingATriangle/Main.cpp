@@ -200,6 +200,7 @@ private:
 		createCommandPool();
 		createTextureImage();
 		createTextureImageView();
+		createTextureSampler();
 		createVertexBuffer();
 		createIndexBuffer();
 		createUniformBuffers();
@@ -229,6 +230,9 @@ private:
 	void cleanup()
 	{
 		cleanupSwapChain();
+
+		//销毁texture image view
+		vkDestroyImageView(device, textureImageView, nullptr);
 
 		//销毁texture image和对应memory
 		vkDestroyImage(device, textureImage, nullptr);
@@ -853,31 +857,7 @@ private:
 		swapChainImageViews.resize(swapChainImages.size());
 		for (size_t i = 0; i < swapChainImages.size(); i++)
 		{
-			VkImageViewCreateInfo createInfo{};
-			createInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
-			//对应的Image
-			createInfo.image = swapChainImages[i];
-			//viewType和format字段指定如何解释图像数据
-			//viewType包括1D、2D、3D纹理和贴图
-			createInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
-			createInfo.format = swapChainImageFormat;
-			//components字段允许我们混合颜色通道，可以实现不同通道映射，在这里我们使用默认映射
-			createInfo.components.r = VK_COMPONENT_SWIZZLE_IDENTITY;
-			createInfo.components.g = VK_COMPONENT_SWIZZLE_IDENTITY;
-			createInfo.components.b = VK_COMPONENT_SWIZZLE_IDENTITY;
-			createInfo.components.a = VK_COMPONENT_SWIZZLE_IDENTITY;
-			//subsresourceRange描述Image的用途和可以访问image的哪些部分，我们在这里将其作为Color target
-			createInfo.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-			createInfo.subresourceRange.baseMipLevel = 0;
-			createInfo.subresourceRange.levelCount = 1;
-			createInfo.subresourceRange.baseArrayLayer = 0;
-			createInfo.subresourceRange.layerCount = 1;
-
-			//创建ImageView
-			if (vkCreateImageView(device, &createInfo, nullptr, &swapChainImageViews[i]) != VK_SUCCESS)
-			{
-				throw std::runtime_error("failed to create image views!");
-			}
+			swapChainImageViews[i] = createImageView(swapChainImages[i], swapChainImageFormat);
 		}
 	}
 #pragma endregion
@@ -1941,6 +1921,46 @@ private:
 
 	void createTextureImageView()
 	{
+		textureImageView = createImageView(textureImage, VK_FORMAT_R8G8B8A8_SRGB);
+	}
+
+	//创建image view的抽象
+	VkImageView createImageView(VkImage image, VkFormat format)
+	{
+		VkImageViewCreateInfo viewInfo{};
+		viewInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+		viewInfo.image = image;
+		viewInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
+		viewInfo.format = format;
+		viewInfo.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+		viewInfo.subresourceRange.baseMipLevel = 0;
+		viewInfo.subresourceRange.levelCount = 1;
+		viewInfo.subresourceRange.baseArrayLayer = 0;
+		viewInfo.subresourceRange.layerCount = 1;
+
+		VkImageView imageView;
+		if (vkCreateImageView(device, &viewInfo, nullptr, &imageView) != VK_SUCCESS)
+		{
+			throw std::runtime_error("failed to create texture image view!");
+		}
+
+		return imageView;
+	}
+
+	void createTextureSampler()
+	{
+		VkSamplerCreateInfo samplerInfo{};
+		
+		samplerInfo.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
+		//指定了它应该应用的所有filters和transformations
+		//如何对放大或缩小的texels进行插值
+		samplerInfo.magFilter = VK_FILTER_LINEAR;
+		samplerInfo.minFilter = VK_FILTER_LINEAR;
+
+		samplerInfo.addressModeU = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+		samplerInfo.addressModeV = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+		samplerInfo.addressModeW = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+
 
 	}
 #pragma endregion
