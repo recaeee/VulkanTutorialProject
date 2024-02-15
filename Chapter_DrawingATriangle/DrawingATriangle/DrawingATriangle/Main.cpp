@@ -40,6 +40,12 @@
 #define TINYOBJLOADER_IMPLEMENTATION
 #include <tiny_obj_loader.h>
 
+//用于顶点去重
+#include <unordered_map>
+//包含GLM类型的哈希函数
+#define GLM_ENABLE_EXPERIMENTAL
+#include <glm/gtx/hash.hpp>
+
 //使用常量而不是硬编码的width和height，因为我们会多次引用这些值
 const uint32_t WIDTH = 800;
 const uint32_t HEIGHT = 600;
@@ -88,6 +94,60 @@ void DestroyDebugUtilsMeseengerEXT(VkInstance instance, VkDebugUtilsMessengerEXT
 	}
 }
 
+//顶点着色器输入
+struct Vertex {
+	glm::vec3 pos;
+	glm::vec3 color;
+	glm::vec2 texCoord;
+
+	static VkVertexInputBindingDescription getBindingDescription()
+	{
+		//顶点绑定Vertex binding描述了在整个顶点中从内存加载数据的速率。它指定了data entries之间的字节数以及是否在每个顶点后或每个实例之后移动到下一个data entry
+		VkVertexInputBindingDescription bindingDescription{};
+		bindingDescription.binding = 0;
+		bindingDescription.stride = sizeof(Vertex);
+		bindingDescription.inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
+		return bindingDescription;
+	}
+
+	static std::array<VkVertexInputAttributeDescription, 3> getAttributeDescriptions()
+	{
+		//属性描述Attribute description结构体描述了如何从源自绑定描述Binding descrription的顶点数据块中提取顶点属性
+		std::array<VkVertexInputAttributeDescription, 3> attributeDescriptions{};
+
+		attributeDescriptions[0].binding = 0;
+		attributeDescriptions[0].location = 0;
+		attributeDescriptions[0].format = VK_FORMAT_R32G32B32_SFLOAT;
+		attributeDescriptions[0].offset = offsetof(Vertex, pos);
+
+		attributeDescriptions[1].binding = 0;
+		attributeDescriptions[1].location = 1;
+		attributeDescriptions[1].format = VK_FORMAT_R32G32B32_SFLOAT;
+		attributeDescriptions[1].offset = offsetof(Vertex, color);
+
+		attributeDescriptions[2].binding = 0;
+		attributeDescriptions[2].location = 2;
+		attributeDescriptions[2].format = VK_FORMAT_R32G32_SFLOAT;
+		attributeDescriptions[2].offset = offsetof(Vertex, texCoord);
+
+		return attributeDescriptions;
+	}
+
+	bool operator==(const Vertex& other) const {
+		return pos == other.pos && color == other.color && texCoord == other.texCoord;
+	}
+};
+
+namespace std {
+	template<> struct hash<Vertex> {
+		size_t operator()(Vertex const& vertex) const {
+			return ((hash<glm::vec3>()(vertex.pos) ^
+				(hash<glm::vec3>()(vertex.color) << 1)) >> 1) ^
+				(hash<glm::vec2>()(vertex.texCoord) << 1);
+		}
+	};
+}
+
 class HelloTriangleApplication
 {
 public:
@@ -100,46 +160,6 @@ public:
 	}
 
 private:
-	//顶点着色器输入
-	struct Vertex {
-		glm::vec3 pos;
-		glm::vec3 color;
-		glm::vec2 texCoord;
-
-		static VkVertexInputBindingDescription getBindingDescription()
-		{
-			//顶点绑定Vertex binding描述了在整个顶点中从内存加载数据的速率。它指定了data entries之间的字节数以及是否在每个顶点后或每个实例之后移动到下一个data entry
-			VkVertexInputBindingDescription bindingDescription{};
-			bindingDescription.binding = 0;
-			bindingDescription.stride = sizeof(Vertex);
-			bindingDescription.inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
-			return bindingDescription;
-		}
-
-		static std::array<VkVertexInputAttributeDescription, 3> getAttributeDescriptions()
-		{
-			//属性描述Attribute description结构体描述了如何从源自绑定描述Binding descrription的顶点数据块中提取顶点属性
-			std::array<VkVertexInputAttributeDescription, 3> attributeDescriptions{};
-
-			attributeDescriptions[0].binding = 0;
-			attributeDescriptions[0].location = 0;
-			attributeDescriptions[0].format = VK_FORMAT_R32G32B32_SFLOAT;
-			attributeDescriptions[0].offset = offsetof(Vertex, pos);
-
-			attributeDescriptions[1].binding = 0;
-			attributeDescriptions[1].location = 1;
-			attributeDescriptions[1].format = VK_FORMAT_R32G32B32_SFLOAT;
-			attributeDescriptions[1].offset = offsetof(Vertex, color);
-
-			attributeDescriptions[2].binding = 0;
-			attributeDescriptions[2].location = 2;
-			attributeDescriptions[2].format = VK_FORMAT_R32G32_SFLOAT;
-			attributeDescriptions[2].offset = offsetof(Vertex, texCoord);
-
-			return attributeDescriptions;
-		}
-	};
-
 	GLFWwindow* window;
 	VkInstance instance;
 	//管理debug callback的handle
@@ -189,6 +209,7 @@ private:
 	bool framebufferResized = false;
 	//mesh顶点和索引数据
 	std::vector<Vertex> vertices;
+	std::unordered_map<Vertex, uint32_t> uniqueVertices{};
 	std::vector<uint32_t> indices;
 	//Vertex buffer
 	VkBuffer vertexBuffer;
@@ -1519,24 +1540,6 @@ private:
 #pragma endregion
 
 #pragma region Vertex buffers
-	//const std::vector<Vertex> vertices = {
-	//	{{-0.5f, -0.5f, 0.0f}, {1.0f, 0.0f, 0.0f}, {1.0f, 0.0f}},
-	//	{{0.5f, -0.5f, 0.0f}, {0.0f, 1.0f, 0.0f}, {0.0f, 0.0f}},
-	//	{{0.5f, 0.5f, 0.0f}, {0.0f, 0.0f, 1.0f}, {0.0f, 1.0f}},
-	//	{{-0.5f, 0.5f, 0.0f}, {1.0f, 1.0f, 1.0f}, {1.0f, 1.0f}},
-	//	//下面的正方形
-	//	{{-0.5f, -0.5f, -0.5f}, {1.0f, 0.0f, 0.0f}, {1.0f, 0.0f}},
-	//	{{0.5f, -0.5f, -0.5f}, {0.0f, 1.0f, 0.0f}, {0.0f, 0.0f}},
-	//	{{0.5f, 0.5f, -0.5f}, {0.0f, 0.0f, 1.0f}, {0.0f, 1.0f}},
-	//	{{-0.5f, 0.5f, -0.5f}, {1.0f, 1.0f, 1.0f}, {1.0f, 1.0f}}
-	//};
-
-	//const std::vector<uint16_t> indices = {
-	//	0, 1, 2, 2, 3, 0,
-	//	//下面的正方形
-	//	4, 5, 6, 6, 7, 4
-	//};
-
 	void createVertexBuffer()
 	{
 		VkDeviceSize bufferSize = sizeof(vertices[0]) * vertices.size();
@@ -2178,8 +2181,8 @@ private:
 	void loadModel()
 	{
 		//加载一个model到该库中的数据结构
-		tinyobj::attrib_t attrib;
-		std::vector<tinyobj::shape_t> shapes;
+		tinyobj::attrib_t attrib;//attrib容器包含了所有的positions、normals和texture coordinates在它的attrib.vertices、attrib.normals和attrib.texcoords向量
+		std::vector<tinyobj::shape_t> shapes;//shapes容器包含了所有单独的物体和它们的faces
 		std::vector<tinyobj::material_t> materials;
 		std::string warn, err;
 
@@ -2187,9 +2190,41 @@ private:
 		{
 			throw std::runtime_error(warn + err);
 		}
+
+		for (const auto& shape : shapes)
+		{
+			//遍历每个顶点，将其直接复制到我们的verices向量中
+			for (const auto& index : shape.mesh.indices)
+			{
+				Vertex vertex{};
+
+				vertex.pos = {
+					attrib.vertices[3 * index.vertex_index + 0],
+					attrib.vertices[3 * index.vertex_index + 1],
+					attrib.vertices[3 * index.vertex_index + 2]
+				};
+
+				vertex.texCoord = {
+					attrib.texcoords[2 * index.texcoord_index + 0],
+					1.0f - attrib.texcoords[2 * index.texcoord_index + 1]
+				};
+
+				vertex.color = { 1.0f, 1.0f, 1.0f };
+
+				if (uniqueVertices.count(vertex) == 0)
+				{
+					uniqueVertices[vertex] = static_cast<uint32_t>(vertices.size());
+					vertices.push_back(vertex);
+				}
+
+				indices.push_back(uniqueVertices[vertex]);
+			}
+		}
 	}
 #pragma endregion
 };
+
+
 
 int main()
 {
