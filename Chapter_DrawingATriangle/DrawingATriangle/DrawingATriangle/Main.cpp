@@ -174,6 +174,8 @@ private:
 	VkQueue graphicsQueue;
 	//存储Present queue的Handle
 	VkQueue presentQueue;
+	//存储Compute queue的Handle
+	VkQueue computeQueue;
 	//存储Swap chain
 	VkSwapchainKHR swapChain;
 	//存储Swap chain中的VkImage们
@@ -639,14 +641,14 @@ private:
 	struct QueueFamilyIndices
 	{
 		//optional允许uint32_t在实际分配值之前让其保持no value，并且可以通过has_value()来查询是否有值
-		std::optional<uint32_t> graphicsFamily;
+		std::optional<uint32_t> graphicsAndQueueFamily;
 		//用于present image to surface的family
 		std::optional<uint32_t> presentFamily;
 
 		//快速判断当前PhysicalDevices是否支持所有我们需要的Queue Families
 		bool isComplete()
 		{
-			return graphicsFamily.has_value() && presentFamily.has_value();
+			return graphicsAndQueueFamily.has_value() && presentFamily.has_value();
 		}
 	};
 
@@ -665,10 +667,10 @@ private:
 		int i = 0;
 		for (const auto& queueFamily : queueFamilies)
 		{
-			//判断physical device是否支持graphics family
-			if (queueFamily.queueFlags & VK_QUEUE_GRAPHICS_BIT)
+			//判断physical device是否支持graphics family，并且该family同时支持compute
+			if ((queueFamily.queueFlags & VK_QUEUE_GRAPHICS_BIT) && (queueFamily.queueFlags & VK_QUEUE_COMPUTE_BIT))
 			{
-				indices.graphicsFamily = i;
+				indices.graphicsAndQueueFamily = i;
 			}
 			//判断physical device是否支持present family
 			VkBool32 presentSupport = false;
@@ -718,7 +720,7 @@ private:
 		QueueFamilyIndices indices = findQueueFamilies(physicalDevice);
 		// 目前，我们需要Graphics Queue和Present Queue，因此使用Vector存储queueCreateInfos。
 		std::vector<VkDeviceQueueCreateInfo> queueCreateInfos;
-		std::set<uint32_t> uniqueQueueFamilies = { indices.graphicsFamily.value(),
+		std::set<uint32_t> uniqueQueueFamilies = { indices.graphicsAndQueueFamily.value(),
 			indices.presentFamily.value() };
 		float queuePriority = 1.0f;
 		//使用一个循环创建所有QueueCreateInfo
@@ -769,8 +771,10 @@ private:
 
 		//Queue会在Logical device创建时自动创建，我们需要拿到它的句柄（它也会伴随VkDevice销毁而自动销毁）
 		//目前两个Queue family相同，因此返回的两个handle也是相同值的。
-		vkGetDeviceQueue(device, indices.graphicsFamily.value(), 0, &graphicsQueue);
+		vkGetDeviceQueue(device, indices.graphicsAndQueueFamily.value(), 0, &graphicsQueue);
 		vkGetDeviceQueue(device, indices.presentFamily.value(), 0, &presentQueue);
+		//compute queue也是同一个family
+		vkGetDeviceQueue(device, indices.graphicsAndQueueFamily.value(), 0, &computeQueue);
 	}
 #pragma endregion
 
@@ -911,9 +915,9 @@ private:
 
 		//明确swap chain images在多queue families情况下的使用
 		QueueFamilyIndices indices = findQueueFamilies(physicalDevice);
-		uint32_t queueFamilyIndices[] = { indices.graphicsFamily.value(), indices.presentFamily.value() };
+		uint32_t queueFamilyIndices[] = { indices.graphicsAndQueueFamily.value(), indices.presentFamily.value() };
 
-		if (indices.graphicsFamily != indices.presentFamily)
+		if (indices.graphicsAndQueueFamily != indices.presentFamily)
 		{
 			//如果graphics和present为两个queue family，则使用CONCURRENT模式
 			createInfo.imageSharingMode = VK_SHARING_MODE_CONCURRENT;
@@ -972,10 +976,12 @@ private:
 		//加载shader资源
 		auto vertShaderCode = readFile("shaders/vert.spv");
 		auto fragShaderCode = readFile("shaders/frag.spv");
+		auto computeShaderCode = readFile("shaders/compute.spv");
 
 		//封装到Shader modules
 		VkShaderModule vertShaderModule = createShaderModule(vertShaderCode);
 		VkShaderModule fragShaderModule = createShaderModule(fragShaderCode);
+		VkShaderModule computeShaderModule = createShaderModule(computeShaderCode);
 
 		//将shader分配到特定管线阶段
 		VkPipelineShaderStageCreateInfo vertShaderStageInfo{};
@@ -990,7 +996,13 @@ private:
 		fragShaderStageInfo.module = fragShaderModule;
 		fragShaderStageInfo.pName = "main"; //entrypoint
 
-		VkPipelineShaderStageCreateInfo shaderStages[] = { vertShaderStageInfo, fragShaderStageInfo };
+		VkPipelineShaderStageCreateInfo computeShaderStageInfo{};
+		computeShaderStageInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+		computeShaderStageInfo.stage = VK_SHADER_STAGE_COMPUTE_BIT;
+		computeShaderStageInfo.module = computeShaderModule;
+		computeShaderStageInfo.pName = "main";
+
+		VkPipelineShaderStageCreateInfo shaderStages[] = { vertShaderStageInfo, fragShaderStageInfo, computeShaderStageInfo };
 
 		//顶点输入
 		VkPipelineVertexInputStateCreateInfo vertexInputInfo{};
@@ -1312,7 +1324,7 @@ private:
 		poolInfo.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO; // Allow command buffers to be rerecorded individually, without this flag they all have to be reset together
 		poolInfo.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
 	
-		poolInfo.queueFamilyIndex = queueFamilyIndices.graphicsFamily.value(); // 单个pool的指令只能提交到一个queue
+		poolInfo.queueFamilyIndex = queueFamilyIndices.graphicsAndQueueFamily.value(); // 单个pool的指令只能提交到一个queue
 
 		if (vkCreateCommandPool(device, &poolInfo, nullptr, &commandPool) != VK_SUCCESS)
 		{
