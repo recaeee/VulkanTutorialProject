@@ -2689,6 +2689,36 @@ private:
 			vkUpdateDescriptorSets(device, 4, descriptorWrites.data(), 0, nullptr);
 		}
 	}
+
+	void recordComputeCommandBuffer(VkCommandBuffer commandBuffer, uint32_t imageIndex)
+	{
+		//录制绘制指令
+		VkCommandBufferBeginInfo beginInfo{};
+		beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+		beginInfo.flags = 0; // Optional
+		beginInfo.pInheritanceInfo = nullptr; // Optional
+
+		if (vkBeginCommandBuffer(commandBuffer, &beginInfo) != VK_SUCCESS)
+		{
+			throw std::runtime_error("failed to begin recording compute command buffer!");
+		}
+
+		//Compute不需要绑定render pass
+		//绑定compute pipeline
+		vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, computePipeline);
+
+		//为每一帧的正确的descriptor set实际绑定到着色器中的descriptor，好绕，实际就是为每一帧绑定正确的descriptor set
+		vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, computePipelineLayout, 0, 1, &computeDescriptorSets[currentFrame], 0, nullptr);
+
+		//dispatch，发送compute指令
+		vkCmdDispatch(commandBuffer, PARTICLE_COUNT / 256, 1, 1);
+
+		//结束command buffer录制
+		if (vkEndCommandBuffer(commandBuffer) != VK_SUCCESS)
+		{
+			throw std::runtime_error("failed to record compute command buffer!");
+		}
+	}
 #pragma endregion
 };
 
