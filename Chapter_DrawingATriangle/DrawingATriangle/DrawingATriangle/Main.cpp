@@ -295,6 +295,9 @@ private:
 	std::vector<VkDescriptorSet> computeDescriptorSets;
 	VkPipelineLayout computePipelineLayout;
 	VkPipeline computePipeline;
+	std::vector<VkCommandBuffer> computeCommandBuffers;
+	std::vector<VkFence> computeInFlightFences;
+	std::vector<VkSemaphore> computeFinishedSemaphores;
 
 	//所有要启用的device extensions
 	const std::vector<const char*> deviceExtensions = {
@@ -2718,6 +2721,209 @@ private:
 		{
 			throw std::runtime_error("failed to record compute command buffer!");
 		}
+	}
+
+	void recordGraphicsCommandBufferForParticles(VkCommandBuffer commandBuffer, uint32_t imageIndex)
+	{
+		//录制绘制指令
+		VkCommandBufferBeginInfo beginInfo{};
+		beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+		beginInfo.flags = 0; // Optional
+		beginInfo.pInheritanceInfo = nullptr; // Optional
+
+		if (vkBeginCommandBuffer(commandBuffer, &beginInfo) != VK_SUCCESS)
+		{
+			throw std::runtime_error("failed to begin recording command buffer!");
+		}
+
+		//录制开始，先启动一个render pass
+		VkRenderPassBeginInfo renderPassInfo{};
+		renderPassInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
+		//render pass自身和要绑定的attachments
+		renderPassInfo.renderPass = renderPass;
+		renderPassInfo.framebuffer = swapChainFramebuffers[imageIndex];
+		//渲染区域的尺寸
+		renderPassInfo.renderArea.offset = { 0, 0 };
+		renderPassInfo.renderArea.extent = swapChainExtent;
+		//在使用VK_ATTACHMENT_LOAD_OP_CLEAR时使用的Clear Values
+		std::array<VkClearValue, 2> clearValues{};
+		clearValues[0].color = { {0.0f, 0.0f, 0.0f, 1.0f} };
+		clearValues[1].depthStencil = { 1.0f, 0 };
+		renderPassInfo.clearValueCount = static_cast<uint32_t>(clearValues.size());
+		renderPassInfo.pClearValues = clearValues.data();
+
+		vkCmdBeginRenderPass(commandBuffer, &renderPassInfo, VK_SUBPASS_CONTENTS_INLINE);
+
+		//绑定graphics pipeline
+		vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, graphicsPipeline);
+
+		//配置dynamic states
+		VkViewport viewport{};
+		viewport.x = 0.0f;
+		viewport.y = 0.0f;
+		viewport.width = static_cast<float>(swapChainExtent.width);
+		viewport.height = static_cast<float>(swapChainExtent.height);
+		viewport.minDepth = 0.0f;
+		viewport.maxDepth = 1.0f;
+		vkCmdSetViewport(commandBuffer, 0, 1, &viewport);
+
+		VkRect2D scissor{};
+		scissor.offset = { 0, 0 };
+		scissor.extent = swapChainExtent;
+		vkCmdSetScissor(commandBuffer, 0, 1, &scissor);
+
+		//绑定vertex buffer
+		VkDeviceSize offsets[] = { 0 };
+		vkCmdBindVertexBuffers(commandBuffer, 0, 1, &shaderStorageBuffers[currentFrame], offsets);
+		//绘制指令
+		vkCmdDraw(commandBuffer, PARTICLE_COUNT, 1, 0, 0);
+		//结束render pass
+		vkCmdEndRenderPass(commandBuffer);
+		//结束command buffer录制
+		if (vkEndCommandBuffer(commandBuffer) != VK_SUCCESS)
+		{
+			throw std::runtime_error("failed to record command buffer!");
+		}
+	}
+
+	void drawFrameForParticles()
+	{
+		//compute和graphics可以共用一个submitInfo
+		VkSubmitInfo submitInfo{};
+		submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+
+		//等待上一次compute完成
+		vkWaitForFences(device, 1, &computeInFlightFences[currentFrame], VK_TRUE, UINT64_MAX);
+		//更新compute shader的uniform buffer
+		updateComputeUniformBuffer(currentFrame);
+		//在确保我们会执行submit之后再重置fence到unsignaled
+		vkResetFences(device, 1, &computeInFlightFences[currentFrame]);
+		//重置compute command buffer，确保其可以被录制
+		vkResetCommandBuffer(computeCommandBuffers[currentFrame], 0);
+		//录制compute command buffer
+		recordComputeCommandBuffer(computeCommandBuffers[currentFrame], currentFrame);
+
+		submitInfo.commandBufferCount = 1;
+		submitInfo.pCommandBuffers = &computeCommandBuffers[currentFrame];
+		submitInfo.signalSemaphoreCount = 1;
+		submitInfo.pSignalSemaphores = &computeFinishedSemaphores[currentFrame];
+
+		if (vkQueueSubmit(computeQueue, 1, &submitInfo, computeInFlightFences[currentFrame]) != VK_SUCCESS)
+		{
+			throw std::runtime_error("failed to submit compute command buffer!");
+		}
+
+		//接下来是graphics部分
+		//等待上一帧完成
+		vkWaitForFences(device, 1, &inFlightFences[currentFrame], VK_TRUE, UINT64_MAX);
+
+		//从swap chain中获取一张image
+		uint32_t imageIndex;
+		VkResult result = vkAcquireNextImageKHR(device, swapChain, UINT64_MAX, imageAvailableSemaphores[currentFrame], VK_NULL_HANDLE, &imageIndex);
+		//swap chain过时的话重建
+		if (result == VK_ERROR_OUT_OF_DATE_KHR)
+		{
+			//swap chain已经不再和surface兼容，并且不能再用于渲染。通常发生在window resize。
+			recreateSwapChain();
+			return;
+		}
+		else if (result != VK_SUCCESS && result != VK_SUBOPTIMAL_KHR)
+		{
+			throw std::runtime_error("failed to acquire swap chain image!");
+		}
+
+		//在确保我们会执行submit之后再重置fence到unsignaled
+		vkResetFences(device, 1, &inFlightFences[currentFrame]);
+
+		//更新uniform数据
+		updateUniformBuffer(currentFrame);
+
+		//重置command buffer，确保其可以被录制
+		vkResetCommandBuffer(commandBuffers[currentFrame], 0);
+		//录制指令
+		recordCommandBuffer(commandBuffers[currentFrame], imageIndex);
+
+		//提交command buffer到queue中，并且配置同步
+		//配置同步，注意这里要让STAGE_VERTEX_INPUT等待compute计算完成
+		VkSemaphore waitSemaphores[] = { computeFinishedSemaphores[currentFrame], imageAvailableSemaphores[currentFrame] };
+		VkPipelineStageFlags waitStages[] = { VK_PIPELINE_STAGE_VERTEX_INPUT_BIT, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT };
+		//重置submitInfo
+		submitInfo = {};
+		submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+
+		submitInfo.waitSemaphoreCount = 2;
+		submitInfo.pWaitSemaphores = waitSemaphores;
+		submitInfo.pWaitDstStageMask = waitStages;
+		//配置要提交的command buffer
+		submitInfo.commandBufferCount = 1;
+		submitInfo.pCommandBuffers = &computeCommandBuffers[currentFrame];
+		//配置command buffer执行完毕后要signal的semaphores
+		VkSemaphore signalSemaphores[] = { renderFinishedSemaphores[currentFrame] };
+		submitInfo.signalSemaphoreCount = 1;
+		submitInfo.pSignalSemaphores = signalSemaphores;
+		//提交Command buffer
+		if (vkQueueSubmit(graphicsQueue, 1, &submitInfo, inFlightFences[currentFrame]) != VK_SUCCESS)
+		{
+			throw std::runtime_error("failed to submit draw command buffer!");
+		}
+
+		//Presentation
+		VkPresentInfoKHR presentInfo{};
+		presentInfo.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR;
+		//等待command buffer执行完毕
+		presentInfo.waitSemaphoreCount = 1;
+		presentInfo.pWaitSemaphores = signalSemaphores;
+		//呈现image的swap chains和每个swap chain的image index
+		VkSwapchainKHR swapChains[] = { swapChain };
+		presentInfo.swapchainCount = 1;
+		presentInfo.pSwapchains = swapChains;
+		presentInfo.pImageIndices = &imageIndex;
+		//指定一个VkResult数组，来检查每个swap chain的presentation是否成功
+		presentInfo.pResults = nullptr; // Optional
+		//向swap chain提交一个present an image的请求
+		result = vkQueuePresentKHR(presentQueue, &presentInfo);
+
+		if (result == VK_ERROR_OUT_OF_DATE_KHR || result == VK_SUBOPTIMAL_KHR || framebufferResized)
+		{
+			framebufferResized = false;
+			recreateSwapChain();
+		}
+		else if (result != VK_SUCCESS)
+		{
+			throw std::runtime_error("failed to present swap chain image!");
+		}
+
+		//递进到下一帧
+		currentFrame = (currentFrame + 1) % MAX_FRAMES_IN_FLIGHTS;
+	}
+
+	void createComputeSyncObjects()
+	{
+		computeFinishedSemaphores.resize(MAX_FRAMES_IN_FLIGHTS);
+		computeInFlightFences.resize(MAX_FRAMES_IN_FLIGHTS);
+
+		VkSemaphoreCreateInfo semaphoreInfo{};
+		semaphoreInfo.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
+
+		VkFenceCreateInfo fenceInfo{};
+		fenceInfo.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
+		//创建时置为signaled，避免第一帧block
+		fenceInfo.flags = VK_FENCE_CREATE_SIGNALED_BIT;
+
+		for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHTS; i++)
+		{
+			if (vkCreateSemaphore(device, &semaphoreInfo, nullptr, &computeFinishedSemaphores[i]) != VK_SUCCESS
+				||
+				vkCreateFence(device, &fenceInfo, nullptr, &computeInFlightFences[i]) != VK_SUCCESS)
+			{
+				throw std::runtime_error("failed to create semaphores!");
+			}
+		}
+	}
+
+	void updateComputeUniformBuffer(int imageIndex)
+	{
+
 	}
 #pragma endregion
 };
