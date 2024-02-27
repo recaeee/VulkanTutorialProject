@@ -12,11 +12,11 @@ layout (binding = 0) uniform ParameterUBO {
 
 layout(std140, binding = 1) readonly buffer ParticleSSBOIn {
     Particle particlesIn[];
-}
+};
 
 layout(std140, binding = 2) buffer ParticleSSBOOut {
     Particle particlesOut[];
-}
+};
 
 layout (local_size_x = 256, local_size_y = 1, local_size_z = 1) in;
 
