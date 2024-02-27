@@ -201,6 +201,14 @@ public:
 		cleanup();
 	}
 
+	void runForParticles()
+	{
+		initWindowForParticles();
+		initVulkanForPaticles();
+		mainLoopForParticles();
+		cleanupForParticles();
+	}
+
 private:
 	GLFWwindow* window;
 	VkInstance instance;
@@ -2535,7 +2543,7 @@ private:
 		//图元装配模式
 		VkPipelineInputAssemblyStateCreateInfo inputAssembly{};
 		inputAssembly.sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO;
-		inputAssembly.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+		inputAssembly.topology = VK_PRIMITIVE_TOPOLOGY_POINT_LIST;
 		inputAssembly.primitiveRestartEnable = VK_FALSE;
 
 		//视口
@@ -2619,7 +2627,7 @@ private:
 		VkPipelineLayoutCreateInfo pipelineLayoutInfo{};
 		pipelineLayoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
 		pipelineLayoutInfo.setLayoutCount = 1; // Optional
-		pipelineLayoutInfo.pSetLayouts = &descriptorSetLayout; // Optional
+		pipelineLayoutInfo.pSetLayouts = &computeDescriptorSetLayout; // Optional
 		pipelineLayoutInfo.pushConstantRangeCount = 0; // Optional
 		pipelineLayoutInfo.pPushConstantRanges = nullptr; // Optinal
 
@@ -2715,6 +2723,9 @@ private:
 			// Copy data from the staging buffer (host) to the shader storage buffer (GPU)
 			copyBuffer(stagingBuffer, shaderStorageBuffers[i], bufferSize);
 		}
+
+		vkDestroyBuffer(device, stagingBuffer, nullptr);
+		vkFreeMemory(device, stagingBufferMemory, nullptr);
 	}
 
 	void createComputeDescriptorSetLayout()
@@ -2737,7 +2748,7 @@ private:
 		//当前帧storage shader buffer
 		layoutBindings[2].binding = 2;
 		layoutBindings[2].descriptorCount = 1;
-		layoutBindings[2].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+		layoutBindings[2].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
 		layoutBindings[2].pImmutableSamplers = nullptr;
 		layoutBindings[2].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
 
@@ -2800,7 +2811,7 @@ private:
 
 			//compute的uniform buffer
 			VkDescriptorBufferInfo uniformBufferInfo{};
-			uniformBufferInfo.buffer = uniformBuffers[i];
+			uniformBufferInfo.buffer = uniformBuffersForParticles[i];
 			uniformBufferInfo.offset = 0;
 			uniformBufferInfo.range = sizeof(UniformBufferObjectForParticles);
 
@@ -2884,7 +2895,7 @@ private:
 		}
 	}
 
-	void recordComputeCommandBuffer(VkCommandBuffer commandBuffer, uint32_t imageIndex)
+	void recordComputeCommandBuffer(VkCommandBuffer commandBuffer)
 	{
 		//录制绘制指令
 		VkCommandBufferBeginInfo beginInfo{};
@@ -2992,7 +3003,7 @@ private:
 		//重置compute command buffer，确保其可以被录制
 		vkResetCommandBuffer(computeCommandBuffers[currentFrame], 0);
 		//录制compute command buffer
-		recordComputeCommandBuffer(computeCommandBuffers[currentFrame], currentFrame);
+		recordComputeCommandBuffer(computeCommandBuffers[currentFrame]);
 
 		submitInfo.commandBufferCount = 1;
 		submitInfo.pCommandBuffers = &computeCommandBuffers[currentFrame];
@@ -3044,7 +3055,7 @@ private:
 		submitInfo.pWaitDstStageMask = waitStages;
 		//配置要提交的command buffer
 		submitInfo.commandBufferCount = 1;
-		submitInfo.pCommandBuffers = &computeCommandBuffers[currentFrame];
+		submitInfo.pCommandBuffers = &commandBuffers[currentFrame];
 		//配置command buffer执行完毕后要signal的semaphores
 		VkSemaphore signalSemaphores[] = { renderFinishedSemaphores[currentFrame] };
 		submitInfo.signalSemaphoreCount = 1;
@@ -3134,6 +3145,7 @@ private:
 	//initVulkan函数来用于实例化Vulkan objects私有成员
 	void initVulkanForPaticles()
 	{
+		
 		createInstance();
 		setupDebugMessenger();
 		createSurface();
@@ -3189,6 +3201,14 @@ private:
 			vkDestroyBuffer(device, uniformBuffersForParticles[i], nullptr);
 			vkFreeMemory(device, uniformBuffersMemoryForParticles[i], nullptr);
 		}
+
+		//销毁Shader storage buffer和对应Memory
+		for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHTS; i++)
+		{
+			vkDestroyBuffer(device, shaderStorageBuffers[i], nullptr);
+			vkFreeMemory(device, shaderStorageBuffersMemory[i], nullptr);
+		}
+
 		//销毁descriptor pool
 		vkDestroyDescriptorPool(device, computeDescriptorPool, nullptr);
 
@@ -3236,14 +3256,6 @@ private:
 		//结束GLFW本身
 		glfwTerminate();
 	}
-
-	void runForParticles()
-	{
-		initWindowForParticles();
-		initVulkanForPaticles();
-		mainLoopForParticles();
-		cleanupForParticles();
-	}
 #pragma endregion
 };
 
@@ -3253,7 +3265,7 @@ int main()
 
 	try 
 	{
-		app.run();
+		app.runForParticles();
 	}
 	catch(const std::exception& e)
 	{
