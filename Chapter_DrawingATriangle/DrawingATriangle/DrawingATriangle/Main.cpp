@@ -143,6 +143,10 @@ struct Vertex {
 	}
 };
 
+struct UniformBufferObjectForParticles {
+	float deltaTime = 1.0f;
+};
+
 struct Particle {
 	glm::vec2 position;
 	glm::vec2 velocity;
@@ -298,6 +302,11 @@ private:
 	std::vector<VkCommandBuffer> computeCommandBuffers;
 	std::vector<VkFence> computeInFlightFences;
 	std::vector<VkSemaphore> computeFinishedSemaphores;
+	std::vector<VkBuffer> uniformBuffersForParticles;
+	std::vector<VkDeviceMemory> uniformBuffersMemoryForParticles;
+	std::vector<void*> uniformBuffersMappedForParticles;
+	float lastFrameTime = 0.0f;
+	double lastTime = 0.0f;
 
 	//所有要启用的device extensions
 	const std::vector<const char*> deviceExtensions = {
@@ -2438,31 +2447,16 @@ private:
 #pragma endregion
 
 #pragma region Compute Shader
-	//创建包含compute shader的pipeline
-	void createGraphicsAndComputePipeline()
+	//创建compute pipeline
+	void createComputePipeline()
 	{
 		//加载shader资源
-		auto vertShaderCode = readFile("shaders/vert.spv");
-		auto fragShaderCode = readFile("shaders/frag.spv");
 		auto computeShaderCode = readFile("shaders/compute.spv");
 
 		//封装到Shader modules
-		VkShaderModule vertShaderModule = createShaderModule(vertShaderCode);
-		VkShaderModule fragShaderModule = createShaderModule(fragShaderCode);
 		VkShaderModule computeShaderModule = createShaderModule(computeShaderCode);
 
 		//将shader分配到特定管线阶段
-		VkPipelineShaderStageCreateInfo vertShaderStageInfo{};
-		vertShaderStageInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
-		vertShaderStageInfo.stage = VK_SHADER_STAGE_VERTEX_BIT; // 要分配的管线阶段
-		vertShaderStageInfo.module = vertShaderModule;
-		vertShaderStageInfo.pName = "main"; //entrypoint
-
-		VkPipelineShaderStageCreateInfo fragShaderStageInfo{};
-		fragShaderStageInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
-		fragShaderStageInfo.stage = VK_SHADER_STAGE_FRAGMENT_BIT; // 要分配的管线阶段
-		fragShaderStageInfo.module = fragShaderModule;
-		fragShaderStageInfo.pName = "main"; //entrypoint
 
 		VkPipelineShaderStageCreateInfo computeShaderStageInfo{};
 		computeShaderStageInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
@@ -2470,7 +2464,7 @@ private:
 		computeShaderStageInfo.module = computeShaderModule;
 		computeShaderStageInfo.pName = "main";
 
-		VkPipelineShaderStageCreateInfo shaderStages[] = { vertShaderStageInfo, fragShaderStageInfo, computeShaderStageInfo };
+		VkPipelineShaderStageCreateInfo shaderStages[] = { computeShaderStageInfo };
 
 		//创建pipeline layout
 		VkPipelineLayoutCreateInfo pipelineLayoutInfo{};
@@ -2497,9 +2491,187 @@ private:
 		}
 
 		//创建完pipeline后立刻销毁shader modules
+		vkDestroyShaderModule(device, computeShaderModule, nullptr);
+	}
+
+	//创建pipeline
+	void createGraphicsPipelineForParticles()
+	{
+		//加载shader资源
+		auto vertShaderCode = readFile("shaders/particleVert.spv");
+		auto fragShaderCode = readFile("shaders/particleFrag.spv");
+
+		//封装到Shader modules
+		VkShaderModule vertShaderModule = createShaderModule(vertShaderCode);
+		VkShaderModule fragShaderModule = createShaderModule(fragShaderCode);
+
+		//将shader分配到特定管线阶段
+		VkPipelineShaderStageCreateInfo vertShaderStageInfo{};
+		vertShaderStageInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+		vertShaderStageInfo.stage = VK_SHADER_STAGE_VERTEX_BIT; // 要分配的管线阶段
+		vertShaderStageInfo.module = vertShaderModule;
+		vertShaderStageInfo.pName = "main"; //entrypoint
+
+		VkPipelineShaderStageCreateInfo fragShaderStageInfo{};
+		fragShaderStageInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+		fragShaderStageInfo.stage = VK_SHADER_STAGE_FRAGMENT_BIT; // 要分配的管线阶段
+		fragShaderStageInfo.module = fragShaderModule;
+		fragShaderStageInfo.pName = "main"; //entrypoint
+
+		VkPipelineShaderStageCreateInfo shaderStages[] = { vertShaderStageInfo, fragShaderStageInfo };
+
+		//顶点输入
+		VkPipelineVertexInputStateCreateInfo vertexInputInfo{};
+		vertexInputInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
+
+		auto bindingDescription = Particle::getBindingDescription();
+		auto attributeDescriptions = Particle::getAttributeDescriptions();
+
+		vertexInputInfo.vertexBindingDescriptionCount = 1;
+		vertexInputInfo.vertexAttributeDescriptionCount = static_cast<uint32_t>(attributeDescriptions.size());
+		vertexInputInfo.pVertexBindingDescriptions = &bindingDescription;
+		vertexInputInfo.pVertexAttributeDescriptions = attributeDescriptions.data();
+
+		//图元装配模式
+		VkPipelineInputAssemblyStateCreateInfo inputAssembly{};
+		inputAssembly.sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO;
+		inputAssembly.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+		inputAssembly.primitiveRestartEnable = VK_FALSE;
+
+		//视口
+		VkViewport viewport{};
+		viewport.x = 0.0f;
+		viewport.y = 0.0f;
+		viewport.width = (float)swapChainExtent.width;
+		viewport.height = (float)swapChainExtent.height;
+		viewport.minDepth = 0.0f;
+		viewport.maxDepth = 1.0f;
+
+		//定义裁剪矩形
+		VkRect2D scissor{};
+		scissor.offset = { 0, 0 };
+		scissor.extent = swapChainExtent;
+
+		//确定动态状态
+		std::vector<VkDynamicState> dynamicStates = {
+			VK_DYNAMIC_STATE_VIEWPORT,
+			VK_DYNAMIC_STATE_SCISSOR
+		};
+
+		VkPipelineDynamicStateCreateInfo dynamicState{};
+		dynamicState.sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO;
+		dynamicState.dynamicStateCount = static_cast<uint32_t>(dynamicStates.size());
+		dynamicState.pDynamicStates = dynamicStates.data();
+
+		//在创建管线时只需要确定viewportState的数量，在绘制时再确定实际使用的viewport和scissor
+		VkPipelineViewportStateCreateInfo viewportState{};
+		viewportState.sType = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO;
+		viewportState.viewportCount = 1;
+		viewportState.scissorCount = 1;
+
+		//配置光栅化器
+		VkPipelineRasterizationStateCreateInfo rasterizer{};
+		rasterizer.sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO;
+		rasterizer.depthClampEnable = VK_FALSE; // 如果depthClampEnable为true，超出近、远平面的片元会被Clamp而不是丢弃它们。这在绘制深度图等一些特殊情况有用，使用它需要一个GPU feature。
+		rasterizer.rasterizerDiscardEnable = VK_FALSE; // 该值为true时，会在光栅化阶段丢弃所有片元。
+		rasterizer.polygonMode = VK_POLYGON_MODE_FILL; // 决定根据几何图形如何生成片元，可以是FILL、LINE、POINT，后两者需要GPU feature
+		rasterizer.lineWidth = 1.0f; //超过1.0时，需要启用wideLines GPU feature
+		rasterizer.cullMode = VK_CULL_MODE_BACK_BIT; //面剔除类型
+		rasterizer.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE; //确定正面方向
+		rasterizer.depthBiasEnable = VK_FALSE; // 可以设置深度偏移
+		rasterizer.depthBiasConstantFactor = 0.0f; // Optional
+		rasterizer.depthBiasClamp = 0.0f; // Optional
+		rasterizer.depthBiasSlopeFactor = 0.0f; // Optional
+
+		//配置多重采样
+		VkPipelineMultisampleStateCreateInfo multisampling{};
+		multisampling.sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
+		multisampling.rasterizationSamples = msaaSamples;
+		multisampling.sampleShadingEnable = VK_FALSE;
+		multisampling.minSampleShading = 1.0f; // Optional
+		multisampling.pSampleMask = nullptr; // Optional
+		multisampling.alphaToCoverageEnable = VK_FALSE; // Optional
+		multisampling.alphaToOneEnable = VK_FALSE; // Optional
+
+		//配置颜色混合，需要2个结构体
+		VkPipelineColorBlendAttachmentState colorBlendAttachment{};
+		colorBlendAttachment.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
+		colorBlendAttachment.blendEnable = VK_FALSE;
+		colorBlendAttachment.srcColorBlendFactor = VK_BLEND_FACTOR_ONE; // Optional
+		colorBlendAttachment.dstColorBlendFactor = VK_BLEND_FACTOR_ZERO; // Optional
+		colorBlendAttachment.colorBlendOp = VK_BLEND_OP_ADD; // Optional
+		colorBlendAttachment.srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE; // Optional
+		colorBlendAttachment.dstAlphaBlendFactor = VK_BLEND_FACTOR_ZERO; // Optional
+		colorBlendAttachment.alphaBlendOp = VK_BLEND_OP_ADD; // Optional
+
+		VkPipelineColorBlendStateCreateInfo colorBlending{};
+		colorBlending.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
+		colorBlending.logicOpEnable = VK_FALSE;
+		colorBlending.logicOp = VK_LOGIC_OP_COPY; // Optional
+		colorBlending.attachmentCount = 1;
+		colorBlending.pAttachments = &colorBlendAttachment;
+		colorBlending.blendConstants[0] = 0.0f; // Optional
+		colorBlending.blendConstants[1] = 0.0f; // Optional
+		colorBlending.blendConstants[2] = 0.0f; // Optional
+		colorBlending.blendConstants[3] = 0.0f; // Optional
+
+		//创建pipeline layout，指定shader uniform值
+		VkPipelineLayoutCreateInfo pipelineLayoutInfo{};
+		pipelineLayoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+		pipelineLayoutInfo.setLayoutCount = 1; // Optional
+		pipelineLayoutInfo.pSetLayouts = &descriptorSetLayout; // Optional
+		pipelineLayoutInfo.pushConstantRangeCount = 0; // Optional
+		pipelineLayoutInfo.pPushConstantRanges = nullptr; // Optinal
+
+		if (vkCreatePipelineLayout(device, &pipelineLayoutInfo, nullptr, &pipelineLayout) != VK_SUCCESS)
+		{
+			throw std::runtime_error("failed to create pipeline layout!");
+		}
+
+		//创建pipeline
+		VkGraphicsPipelineCreateInfo pipelineInfo{};
+		pipelineInfo.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
+		//shader stages
+		pipelineInfo.stageCount = 2;
+		pipelineInfo.pStages = shaderStages;
+		//fixed-function
+		pipelineInfo.pVertexInputState = &vertexInputInfo;
+		pipelineInfo.pInputAssemblyState = &inputAssembly;
+		pipelineInfo.pViewportState = &viewportState;
+		pipelineInfo.pRasterizationState = &rasterizer;
+		pipelineInfo.pMultisampleState = &multisampling;
+		pipelineInfo.pDepthStencilState = nullptr; // Optional
+		pipelineInfo.pColorBlendState = &colorBlending;
+		pipelineInfo.pDynamicState = &dynamicState;
+		//pipeline layout
+		pipelineInfo.layout = pipelineLayout;
+		//render pass
+		pipelineInfo.renderPass = renderPass;
+		pipelineInfo.subpass = 0;//subpass index
+		pipelineInfo.basePipelineHandle = VK_NULL_HANDLE; // Optional
+		pipelineInfo.basePipelineIndex = -1; // Optional
+		//开启深度测试
+		VkPipelineDepthStencilStateCreateInfo depthStencil{};
+		depthStencil.sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO;
+		depthStencil.depthTestEnable = VK_TRUE;
+		depthStencil.depthWriteEnable = VK_TRUE;
+		depthStencil.depthCompareOp = VK_COMPARE_OP_LESS;
+		depthStencil.depthBoundsTestEnable = VK_FALSE;
+		depthStencil.minDepthBounds = 0.0f; // Optional
+		depthStencil.maxDepthBounds = 1.0f; // Optional
+		depthStencil.stencilTestEnable = VK_FALSE;
+		depthStencil.front = {}; // Optional
+		depthStencil.back = {}; // Optional
+		pipelineInfo.pDepthStencilState = &depthStencil;
+
+		if (vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1, &pipelineInfo, nullptr, &graphicsPipeline) != VK_SUCCESS)
+		{
+			throw std::runtime_error("failed to create graphics pipeline!");
+		}
+
+		//创建完pipeline后立刻销毁shader modules
 		vkDestroyShaderModule(device, fragShaderModule, nullptr);
 		vkDestroyShaderModule(device, vertShaderModule, nullptr);
-		vkDestroyShaderModule(device, computeShaderModule, nullptr);
 	}
 
 	void createShaderStorageBuffers()
@@ -2547,38 +2719,31 @@ private:
 
 	void createComputeDescriptorSetLayout()
 	{
-		std::array<VkDescriptorSetLayoutBinding, 4> layoutBindings{};
-		//之前章节的uniform buffer，即MVP矩阵
+		std::array<VkDescriptorSetLayoutBinding, 3> layoutBindings{};
+		//compute的uniform buffer
 		layoutBindings[0].binding = 0;
 		layoutBindings[0].descriptorCount = 1;
 		layoutBindings[0].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
 		layoutBindings[0].pImmutableSamplers = nullptr;
 		layoutBindings[0].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
 
-		//combined image sampler的binding
-		layoutBindings[1].binding = 1;//ubo的binding为0，combined image sampler的binding为1
-		layoutBindings[1].descriptorCount = 1;
-		layoutBindings[1].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-		layoutBindings[1].pImmutableSamplers = nullptr;// Optional
-		layoutBindings[1].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;//片元着色器中使用
-
 		//上一帧storage shader buffer
+		layoutBindings[1].binding = 1;
+		layoutBindings[1].descriptorCount = 1;
+		layoutBindings[1].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+		layoutBindings[1].pImmutableSamplers = nullptr;
+		layoutBindings[1].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
+
+		//当前帧storage shader buffer
 		layoutBindings[2].binding = 2;
 		layoutBindings[2].descriptorCount = 1;
-		layoutBindings[2].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+		layoutBindings[2].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
 		layoutBindings[2].pImmutableSamplers = nullptr;
 		layoutBindings[2].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
 
-		//当前帧storage shader buffer
-		layoutBindings[3].binding = 3;
-		layoutBindings[3].descriptorCount = 1;
-		layoutBindings[3].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-		layoutBindings[3].pImmutableSamplers = nullptr;
-		layoutBindings[3].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
-
 		VkDescriptorSetLayoutCreateInfo layoutInfo{};
 		layoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
-		layoutInfo.bindingCount = 4;
+		layoutInfo.bindingCount = 3;
 		layoutInfo.pBindings = layoutBindings.data();
 
 		if (vkCreateDescriptorSetLayout(device, &layoutInfo, nullptr, &computeDescriptorSetLayout) != VK_SUCCESS)
@@ -2631,13 +2796,13 @@ private:
 
 		for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHTS; i++)
 		{
-			std::array<VkWriteDescriptorSet, 4> descriptorWrites{};
+			std::array<VkWriteDescriptorSet, 3> descriptorWrites{};
 
-			//之前章节的MVP矩阵uniform buffer
+			//compute的uniform buffer
 			VkDescriptorBufferInfo uniformBufferInfo{};
 			uniformBufferInfo.buffer = uniformBuffers[i];
 			uniformBufferInfo.offset = 0;
-			uniformBufferInfo.range = sizeof(UniformBufferObject);
+			uniformBufferInfo.range = sizeof(UniformBufferObjectForParticles);
 
 			descriptorWrites[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
 			descriptorWrites[0].dstSet = computeDescriptorSets[i];
@@ -2647,33 +2812,19 @@ private:
 			descriptorWrites[0].descriptorCount = 1;
 			descriptorWrites[0].pBufferInfo = &uniformBufferInfo;
 
-			//combined image sampler
-			VkDescriptorImageInfo imageInfo{};
-			imageInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-			imageInfo.imageView = textureImageView;
-			imageInfo.sampler = textureSampler;
-
-			descriptorWrites[1].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-			descriptorWrites[1].dstSet = computeDescriptorSets[i];
-			descriptorWrites[1].dstBinding = 1;
-			descriptorWrites[1].dstArrayElement = 0;
-			descriptorWrites[1].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-			descriptorWrites[1].descriptorCount = 1;
-			descriptorWrites[1].pImageInfo = &imageInfo;
-
 			//上一帧的particle数据shader storage buffer
 			VkDescriptorBufferInfo storageBufferInfoLastFrame{};
 			storageBufferInfoLastFrame.buffer = shaderStorageBuffers[(i - 1) % MAX_FRAMES_IN_FLIGHTS];
 			storageBufferInfoLastFrame.offset = 0;
 			storageBufferInfoLastFrame.range = sizeof(Particle) * PARTICLE_COUNT;
 
-			descriptorWrites[2].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-			descriptorWrites[2].dstSet = computeDescriptorSets[i];
-			descriptorWrites[2].dstBinding = 2;
-			descriptorWrites[2].dstArrayElement = 0;
-			descriptorWrites[2].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-			descriptorWrites[2].descriptorCount = 1;
-			descriptorWrites[2].pBufferInfo = &storageBufferInfoLastFrame;
+			descriptorWrites[1].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+			descriptorWrites[1].dstSet = computeDescriptorSets[i];
+			descriptorWrites[1].dstBinding = 1;
+			descriptorWrites[1].dstArrayElement = 0;
+			descriptorWrites[1].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+			descriptorWrites[1].descriptorCount = 1;
+			descriptorWrites[1].pBufferInfo = &storageBufferInfoLastFrame;
 
 			//当前帧的particle数据shader storage buffer
 			VkDescriptorBufferInfo storageBufferInfoCurrentFrame{};
@@ -2681,15 +2832,55 @@ private:
 			storageBufferInfoCurrentFrame.offset = 0;
 			storageBufferInfoCurrentFrame.range = sizeof(Particle) * PARTICLE_COUNT;
 
-			descriptorWrites[3].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-			descriptorWrites[3].dstSet = computeDescriptorSets[i];
-			descriptorWrites[3].dstBinding = 3;
-			descriptorWrites[3].dstArrayElement = 0;
-			descriptorWrites[3].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-			descriptorWrites[3].descriptorCount = 1;
-			descriptorWrites[3].pBufferInfo = &storageBufferInfoCurrentFrame;
+			descriptorWrites[2].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+			descriptorWrites[2].dstSet = computeDescriptorSets[i];
+			descriptorWrites[2].dstBinding = 2;
+			descriptorWrites[2].dstArrayElement = 0;
+			descriptorWrites[2].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+			descriptorWrites[2].descriptorCount = 1;
+			descriptorWrites[2].pBufferInfo = &storageBufferInfoCurrentFrame;
 
-			vkUpdateDescriptorSets(device, 4, descriptorWrites.data(), 0, nullptr);
+			vkUpdateDescriptorSets(device, 3, descriptorWrites.data(), 0, nullptr);
+		}
+	}
+
+	void createComputeCommandBuffers()
+	{
+		computeCommandBuffers.resize(MAX_FRAMES_IN_FLIGHTS);
+
+		VkCommandBufferAllocateInfo allocInfo{};
+		allocInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+		allocInfo.commandPool = commandPool;
+		allocInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+		allocInfo.commandBufferCount = (uint32_t)computeCommandBuffers.size();
+
+		if (vkAllocateCommandBuffers(device, &allocInfo, computeCommandBuffers.data()) != VK_SUCCESS)
+		{
+			throw std::runtime_error("failed to allocate compute command buffers!");
+		}
+	}
+
+	void createComputeSyncObjects()
+	{
+		computeFinishedSemaphores.resize(MAX_FRAMES_IN_FLIGHTS);
+		computeInFlightFences.resize(MAX_FRAMES_IN_FLIGHTS);
+
+		VkSemaphoreCreateInfo semaphoreInfo{};
+		semaphoreInfo.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
+
+		VkFenceCreateInfo fenceInfo{};
+		fenceInfo.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
+		//创建时置为signaled，避免第一帧block
+		fenceInfo.flags = VK_FENCE_CREATE_SIGNALED_BIT;
+
+		for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHTS; i++)
+		{
+			if (vkCreateSemaphore(device, &semaphoreInfo, nullptr, &computeFinishedSemaphores[i]) != VK_SUCCESS
+				||
+				vkCreateFence(device, &fenceInfo, nullptr, &computeInFlightFences[i]) != VK_SUCCESS)
+			{
+				throw std::runtime_error("failed to create semaphores!");
+			}
 		}
 	}
 
@@ -2835,13 +3026,10 @@ private:
 		//在确保我们会执行submit之后再重置fence到unsignaled
 		vkResetFences(device, 1, &inFlightFences[currentFrame]);
 
-		//更新uniform数据
-		updateUniformBuffer(currentFrame);
-
 		//重置command buffer，确保其可以被录制
 		vkResetCommandBuffer(commandBuffers[currentFrame], 0);
 		//录制指令
-		recordCommandBuffer(commandBuffers[currentFrame], imageIndex);
+		recordGraphicsCommandBufferForParticles(commandBuffers[currentFrame], imageIndex);
 
 		//提交command buffer到queue中，并且配置同步
 		//配置同步，注意这里要让STAGE_VERTEX_INPUT等待compute计算完成
@@ -2897,38 +3085,167 @@ private:
 		currentFrame = (currentFrame + 1) % MAX_FRAMES_IN_FLIGHTS;
 	}
 
-	void createComputeSyncObjects()
+	void updateComputeUniformBuffer(uint32_t currentImage)
 	{
-		computeFinishedSemaphores.resize(MAX_FRAMES_IN_FLIGHTS);
-		computeInFlightFences.resize(MAX_FRAMES_IN_FLIGHTS);
+		UniformBufferObjectForParticles ubo{};
+		ubo.deltaTime = lastFrameTime * 2.0f;
 
-		VkSemaphoreCreateInfo semaphoreInfo{};
-		semaphoreInfo.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
+		memcpy(uniformBuffersMappedForParticles[currentImage], &ubo, sizeof(ubo));
+	}
 
-		VkFenceCreateInfo fenceInfo{};
-		fenceInfo.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
-		//创建时置为signaled，避免第一帧block
-		fenceInfo.flags = VK_FENCE_CREATE_SIGNALED_BIT;
+	void createUniformBuffersForParticles()
+	{
+		VkDeviceSize bufferSize = sizeof(UniformBufferObjectForParticles);
+		
+		uniformBuffersForParticles.resize(MAX_FRAMES_IN_FLIGHTS);
+		uniformBuffersMemoryForParticles.resize(MAX_FRAMES_IN_FLIGHTS);
+		uniformBuffersMappedForParticles.resize(MAX_FRAMES_IN_FLIGHTS);
 
 		for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHTS; i++)
 		{
-			if (vkCreateSemaphore(device, &semaphoreInfo, nullptr, &computeFinishedSemaphores[i]) != VK_SUCCESS
-				||
-				vkCreateFence(device, &fenceInfo, nullptr, &computeInFlightFences[i]) != VK_SUCCESS)
-			{
-				throw std::runtime_error("failed to create semaphores!");
-			}
+			createBuffer(bufferSize, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, uniformBuffersForParticles[i], uniformBuffersMemoryForParticles[i]);
+
+			vkMapMemory(device, uniformBuffersMemoryForParticles[i], 0, bufferSize, 0, &uniformBuffersMappedForParticles[i]);
 		}
 	}
 
-	void updateComputeUniformBuffer(int imageIndex)
+	//始化GLFW并且创建一个window
+	void initWindowForParticles()
 	{
+		//初始化GLFW库
+		glfwInit();
 
+		//由于GLFW最开始是被用于创建OpenGL context的，所以我们需要告诉它不要创建一个OpenGL context
+		glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
+		//disable resize功能
+		//glfwWindowHint(GLFW_RESIZABLE, GLFW_FALSE);
+
+		//创建真正的window
+		//前三个参数确定了window的宽、高和标题。第四个参数允许我们选择指定打开window的监视器，最后一个参数仅与OpenGL相关。
+		window = glfwCreateWindow(WIDTH, HEIGHT, "Vulkan", nullptr, nullptr);
+		//将helloTriangleApplication的this指针存储到window中
+		glfwSetWindowUserPointer(window, this);
+		//注册resize回调
+		glfwSetFramebufferSizeCallback(window, framebufferResizeCallback);
+
+		lastTime = glfwGetTime();
+	}
+
+	//initVulkan函数来用于实例化Vulkan objects私有成员
+	void initVulkanForPaticles()
+	{
+		createInstance();
+		setupDebugMessenger();
+		createSurface();
+		pickPhysicalDevice();
+		createLogicalDevice();
+		createSwapChain();
+		createImageViews();
+		createRenderPass();
+		createComputeDescriptorSetLayout();
+		createGraphicsPipelineForParticles();
+		createComputePipeline();
+		createCommandPool();
+		createColorResources();
+		createDepthResources();
+		createFramebuffers();
+		createShaderStorageBuffers();
+		createUniformBuffersForParticles();
+		createComputeDescriptorPool();
+		createComputeDescriptorSets();
+		createCommandBuffers();
+		createComputeCommandBuffers();
+		createSyncObjects();
+		createComputeSyncObjects();
+	}
+
+	//mainloop来开始渲染每一帧
+	void mainLoopForParticles()
+	{
+		//为了确保应用直到发生错误或者关闭window才结束运行，我们需要增加一个事件循环在mainLoop中，如下
+		while (!glfwWindowShouldClose(window))
+		{
+			//处理窗口事件并触发事件回调函数、如鼠标、键盘事件、窗口尺寸的调整、窗口关闭等
+			glfwPollEvents();
+			//绘制一帧
+			drawFrameForParticles();
+			// We want to animate the particle system using the last frames time to get smooth, frame-rate independent animation
+			double currentTime = glfwGetTime();
+			lastFrameTime = (currentTime - lastTime) * 1000.0;
+			lastTime = currentTime;
+		}
+
+		//等待logical device完成所有操作，再退出mainLoop
+		vkDeviceWaitIdle(device);
+	}
+
+	//一旦window被关闭，我们将在**cleanup**函数中确保释放我们用到的所有资源
+	void cleanupForParticles()
+	{
+		cleanupSwapChain();
+		//销毁Uniform buffer和对应Memory
+		for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHTS; i++)
+		{
+			vkDestroyBuffer(device, uniformBuffersForParticles[i], nullptr);
+			vkFreeMemory(device, uniformBuffersMemoryForParticles[i], nullptr);
+		}
+		//销毁descriptor pool
+		vkDestroyDescriptorPool(device, computeDescriptorPool, nullptr);
+
+		//销毁descriptor set layout
+		vkDestroyDescriptorSetLayout(device, computeDescriptorSetLayout, nullptr);
+
+		//销毁graphics pipeline和layout
+		vkDestroyPipeline(device, graphicsPipeline, nullptr);
+		vkDestroyPipelineLayout(device, pipelineLayout, nullptr);
+
+		//销毁compute pipeline和layout
+		vkDestroyPipeline(device, computePipeline, nullptr);
+		vkDestroyPipelineLayout(device, computePipelineLayout, nullptr);
+
+		//销毁render pass
+		vkDestroyRenderPass(device, renderPass, nullptr);
+
+		//当程序结束，并且所有commands都完成了，并且没有更多的同步被需要时，semaphores和fence需要被销毁
+		for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHTS; i++)
+		{
+			vkDestroySemaphore(device, imageAvailableSemaphores[i], nullptr);
+			vkDestroySemaphore(device, renderFinishedSemaphores[i], nullptr);
+			vkDestroyFence(device, inFlightFences[i], nullptr);
+
+			vkDestroySemaphore(device, computeFinishedSemaphores[i], nullptr);
+			vkDestroyFence(device, computeInFlightFences[i], nullptr);
+		}
+
+		//销毁command pool
+		vkDestroyCommandPool(device, commandPool, nullptr);
+
+		//销毁VkDevice
+		vkDestroyDevice(device, nullptr);
+		//销毁DebugUtilsMessenger
+		if (enableValidationLayers)
+		{
+			DestroyDebugUtilsMeseengerEXT(instance, debugMessenger, nullptr);
+		}
+		//销毁Window surface
+		vkDestroySurfaceKHR(instance, surface, nullptr);
+		//VkInstance只应该在程序退出前一刻销毁，所有其他的Vulkan资源都应该在instance销毁前释放
+		vkDestroyInstance(instance, nullptr);
+		//销毁window
+		glfwDestroyWindow(window);
+		//结束GLFW本身
+		glfwTerminate();
+	}
+
+	void runForParticles()
+	{
+		initWindowForParticles();
+		initVulkanForPaticles();
+		mainLoopForParticles();
+		cleanupForParticles();
 	}
 #pragma endregion
 };
-
-
 
 int main()
 {
